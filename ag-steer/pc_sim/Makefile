@@ -21,7 +21,8 @@ LOGIC    := ../src/logic/global_state.cpp \
            ../src/logic/steer_angle.cpp \
            ../src/logic/actuator.cpp \
            ../src/logic/control.cpp \
-           ../src/logic/net.cpp
+           ../src/logic/net.cpp \
+           ../src/logic/hw_status.cpp
 
 SRCS     := $(MAIN) $(HAL_PC) $(LOGIC)
 TARGET   := sim

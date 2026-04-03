@@ -8,6 +8,8 @@
  *
  * CRC = low byte of sum(Byte2 .. Byte[n-2])  (Src + PGN + Len + all data bytes)
  *
+ * Reference: https://github.com/AgOpenGPS-Official/Boards/blob/main/PGN.md
+ *
  * This header contains ONLY constants, structs, and function declarations.
  * No Arduino/ESP32 headers.
  */
@@ -29,7 +31,9 @@ constexpr uint8_t AOG_ID_2 = 0x81;
 // ===================================================================
 constexpr uint8_t AOG_SRC_AGIO       = 0x7F;  // 127 – AgIO application
 constexpr uint8_t AOG_SRC_STEER      = 0x7E;  // 126 – Steer module (this board)
+constexpr uint8_t AOG_SRC_MACHINE    = 0x7B;  // 123 – Machine module
 constexpr uint8_t AOG_SRC_GPS        = 0x7C;  // 124 – GPS module (this board, second role)
+constexpr uint8_t AOG_SRC_GPS_REPLY  = 0x78;  // 120 – GPS module hello reply
 
 // ===================================================================
 // PGN Numbers
@@ -51,9 +55,24 @@ constexpr uint8_t PGN_STEER_DATA_IN     = 0xFE;  // 254  AgIO -> steer module
 constexpr uint8_t PGN_STEER_STATUS_OUT  = 0xFD;  // 253  steer module -> AgIO
 constexpr uint8_t PGN_STEER_SETTINGS_IN = 0xFC;  // 252  AgIO -> steer module (settings)
 constexpr uint8_t PGN_STEER_CONFIG_IN   = 0xFB;  // 251  AgIO -> steer module (config)
+constexpr uint8_t PGN_FROM_AUTOSTEER_2  = 0xFA;  // 250  steer module sensor data
 
 // -- GPS --
 constexpr uint8_t PGN_GPS_MAIN_OUT      = 0xD6;  // 214  GPS module -> AgIO
+
+// -- Hardware Message --
+constexpr uint8_t PGN_HARDWARE_MESSAGE  = 0xDD;  // 221  hardware status message (bidirectional)
+
+// ===================================================================
+// Hardware Message Color Codes
+// ===================================================================
+constexpr uint8_t AOG_HWMSG_COLOR_GREEN  = 0;  // OK / info
+constexpr uint8_t AOG_HWMSG_COLOR_RED    = 1;  // Error / critical
+constexpr uint8_t AOG_HWMSG_COLOR_YELLOW = 2;  // Warning
+constexpr uint8_t AOG_HWMSG_COLOR_BLUE   = 3;  // Informational
+
+/// Special duration value: message persists until updated or dismissed
+constexpr uint8_t AOG_HWMSG_DURATION_PERSIST = 0;
 
 // ===================================================================
 // UDP Ports
@@ -80,6 +99,7 @@ constexpr size_t AOG_HEADER_SIZE  = 5;   // 0x80 + 0x81 + Src + PGN + Len
 constexpr size_t AOG_CRC_SIZE     = 1;
 constexpr size_t AOG_MAX_FRAME    = 256;  // safety limit for receive buffer
 constexpr size_t AOG_MAX_PAYLOAD  = AOG_MAX_FRAME - AOG_HEADER_SIZE - AOG_CRC_SIZE;
+constexpr size_t AOG_HWMSG_MAX_TEXT = 200; // max text length for hardware messages
 
 // ===================================================================
 // AOG Frame Header (5 bytes on the wire)
@@ -92,55 +112,76 @@ struct __attribute__((packed)) AogFrameHeader {
 };
 
 // ===================================================================
-// Hello from AgIO (PGN 200, Src=0x7F)
+// Hello from AgIO (PGN 200, Src=0x7F, Len=3)
 // ===================================================================
 
 struct __attribute__((packed)) AogHelloFromAgio {
-    // payload after header
-    uint8_t  helloFromAgio;  // = 0x7F
+    uint8_t  moduleId;       // = 0x7F (which module this hello is for)
     uint8_t  spare;
     uint16_t agioVersion;    // AgIO version
 };
 
 // ===================================================================
-// Scan Request (PGN 202, Src=0x7F)
+// Scan Request (PGN 202, Src=0x7F, Len=3)
 // ===================================================================
 
 struct __attribute__((packed)) AogScanRequest {
-    uint8_t  scanRequest;  // = 0x7F
+    uint8_t  scanByte1;      // = 0xCA (202)
+    uint8_t  scanByte2;      // = 0xCA (202)
+    uint8_t  numberOfModules; // number of modules to scan (5 typically)
 };
 
 // ===================================================================
-// Subnet Change (PGN 201, Src=0x7F)
+// Subnet Change (PGN 201, Src=0x7F, Len=5)
+// Payload: 0xC9, 0xC9, IP_One, IP_Two, IP_Three
+// Sets the first 3 octets of the destination IP.
 // ===================================================================
 
 struct __attribute__((packed)) AogSubnetChange {
-    uint16_t address;       // new IP subnet address
+    uint8_t  id1;            // = 0xC9 (201) – repeated PGN
+    uint8_t  id2;            // = 0xC9 (201) – repeated PGN
+    uint8_t  ip_one;         // first octet of destination IP
+    uint8_t  ip_two;         // second octet of destination IP
+    uint8_t  ip_three;       // third octet of destination IP
 };
 
+static_assert(sizeof(AogSubnetChange) == 5, "AogSubnetChange must be 5 bytes");
+
 // ===================================================================
-// Subnet Reply (PGN 203, Src=module)
+// Subnet Reply (PGN 203, Src=module, Len=7)
+// Payload: IP_One..IP_Four (4 bytes) + Subnet_One..Subnet_Three (3 bytes)
 // ===================================================================
 
 struct __attribute__((packed)) AogSubnetReply {
-    uint16_t address;
+    uint8_t  ip[4];          // module's full IP address
+    uint8_t  subnet[3];      // subnet mask first 3 octets (e.g. 255.255.255)
 };
 
+static_assert(sizeof(AogSubnetReply) == 7, "AogSubnetReply must be 7 bytes");
+
 // ===================================================================
-// Hello Reply – Steer Module (PGN=0x7E, Src=0x7E)
+// Hello Reply – Steer Module (PGN=0x7E, Src=0x7E, Len=5)
+// Payload: AngleLo, AngleHi, CountsLo, CountsHi, Switchbyte
 // ===================================================================
 
 struct __attribute__((packed)) AogHelloReplySteer {
-    uint16_t address;       // module IP (last two octets as uint16)
+    int16_t  steerAngle;     // current actual steer angle (degrees * 1)
+    uint16_t sensorCounts;   // raw sensor counts
+    uint8_t  switchByte;     // switch status bits
 };
 
+static_assert(sizeof(AogHelloReplySteer) == 5, "AogHelloReplySteer must be 5 bytes");
+
 // ===================================================================
-// Hello Reply – GPS Module (PGN=0x78, Src=0x78)
+// Hello Reply – GPS Module (PGN=0x78, Src=0x78, Len=5)
+// Payload: all zeros/reserved (5 bytes)
 // ===================================================================
 
 struct __attribute__((packed)) AogHelloReplyGps {
-    uint16_t address;       // module IP (last two octets as uint16)
+    uint8_t  reserved[5];    // reserved / unused
 };
+
+static_assert(sizeof(AogHelloReplyGps) == 5, "AogHelloReplyGps must be 5 bytes");
 
 // ===================================================================
 // Steer Data In (PGN 254, Src=0x7F -> steer module)
@@ -151,10 +192,12 @@ struct __attribute__((packed)) AogSteerDataIn {
     int16_t  speed;           // speed [cm/s], signed
     uint8_t  status;          // bitfield: work switch, section states, etc.
     int16_t  steerAngle;      // desired steer angle [degrees * 100], signed
+    uint8_t  xte;             // cross track error
     uint8_t  sectionControl1; // SC1..SC8
     uint8_t  sectionControl2; // SC9..SC16
-    uint8_t  sectionControl3; // SC17..SC24 (or reserved)
 };
+
+static_assert(sizeof(AogSteerDataIn) == 8, "AogSteerDataIn must be 8 bytes");
 
 // ===================================================================
 // Steer Status Out (PGN 253, Src=0x7E -> AgIO)
@@ -163,11 +206,25 @@ struct __attribute__((packed)) AogSteerDataIn {
 
 struct __attribute__((packed)) AogSteerStatusOut {
     int16_t  actualSteerAngle;  // measured angle [degrees * 100], signed
-    int16_t  imuHeading;        // IMU heading [degrees * 10], signed
-    int16_t  imuRoll;           // IMU roll [degrees * 10], signed
+    int16_t  imuHeading;        // IMU heading [degrees * 16], signed
+    int16_t  imuRoll;           // IMU roll [degrees * 16], signed
     uint8_t  switchStatus;      // steering switch state bits
     uint8_t  pwmDisplay;        // current PWM value (0-255)
 };
+
+static_assert(sizeof(AogSteerStatusOut) == 8, "AogSteerStatusOut must be 8 bytes");
+
+// ===================================================================
+// From Autosteer 2 (PGN 250, Src=0x7E -> AgIO)
+// Total payload: 8 bytes – sensor value from steer module
+// ===================================================================
+
+struct __attribute__((packed)) AogFromAutosteer2 {
+    uint8_t  sensorValue;       // steer angle sensor raw value (low byte)
+    uint8_t  reserved[7];       // unused
+};
+
+static_assert(sizeof(AogFromAutosteer2) == 8, "AogFromAutosteer2 must be 8 bytes");
 
 // ===================================================================
 // GPS Main Out (PGN 214, Src=0x7C -> AgIO)
@@ -252,26 +309,52 @@ size_t aogBuildFrame(uint8_t* buf, size_t buf_size,
                      uint8_t src, uint8_t pgn,
                      const void* payload, size_t payload_len);
 
-/// Encode Steer Hello Reply frame.
-size_t encodeAogHelloReplySteer(uint8_t* buf, size_t buf_size, uint16_t address);
+/// Encode Steer Hello Reply frame (PGN=0x7E, Len=5).
+/// Includes current steer angle, sensor counts, and switch status.
+size_t encodeAogHelloReplySteer(uint8_t* buf, size_t buf_size,
+                                int16_t steerAngle,
+                                uint16_t sensorCounts,
+                                uint8_t switchByte);
 
-/// Encode GPS Hello Reply frame.
-size_t encodeAogHelloReplyGps(uint8_t* buf, size_t buf_size, uint16_t address);
+/// Encode GPS Hello Reply frame (PGN=0x78, Len=5).
+size_t encodeAogHelloReplyGps(uint8_t* buf, size_t buf_size);
 
-/// Encode Subnet Reply frame.
-size_t encodeAogSubnetReply(uint8_t* buf, size_t buf_size, uint8_t src, uint16_t address);
+/// Encode Subnet Reply frame (PGN=0xCB, Len=7).
+/// @param src        module source ID (0x7E for steer, 0x7C for GPS, etc.)
+/// @param ip         module's full IP address (4 bytes)
+/// @param subnet     subnet mask (3 bytes: typically 255,255,255)
+size_t encodeAogSubnetReply(uint8_t* buf, size_t buf_size,
+                            uint8_t src,
+                            const uint8_t ip[4],
+                            const uint8_t subnet[3]);
 
-/// Encode Steer Status Out frame.
+/// Encode Steer Status Out frame (PGN=0xFD, Len=8).
 size_t encodeAogSteerStatusOut(uint8_t* buf, size_t buf_size,
                                 int16_t actualAngleX100,
-                                int16_t headingX10,
-                                int16_t rollX10,
+                                int16_t headingX16,
+                                int16_t rollX16,
                                 uint8_t switchStatus,
                                 uint8_t pwmDisplay);
+
+/// Encode From Autosteer 2 frame (PGN=0xFA, Len=8).
+size_t encodeAogFromAutosteer2(uint8_t* buf, size_t buf_size,
+                                uint8_t sensorValue);
 
 /// Encode GPS Main Out frame.
 size_t encodeAogGpsMainOut(uint8_t* buf, size_t buf_size,
                             const AogGpsMainOut& gps);
+
+/// Encode Hardware Message frame (PGN=0xDD, variable length).
+/// @param src      module source ID (0x7E for steer, 0x7C for GPS)
+/// @param duration display duration in seconds (0 = persistent)
+/// @param color    color code (0=green, 1=red, 2=yellow, 3=blue)
+/// @param message  null-terminated ASCII message text
+/// @return total frame length, or 0 on error
+size_t encodeAogHardwareMessage(uint8_t* buf, size_t buf_size,
+                                 uint8_t src,
+                                 uint8_t duration,
+                                 uint8_t color,
+                                 const char* message);
 
 // ===================================================================
 // Decoder functions – return true if frame was valid and decoded.
@@ -297,6 +380,13 @@ bool tryDecodeAogSubnetChange(const uint8_t* payload, size_t payload_len,
 /// Try to decode Steer Data In (PGN 254).
 bool tryDecodeAogSteerDataIn(const uint8_t* payload, size_t payload_len,
                               AogSteerDataIn* out);
+
+/// Try to decode a Hardware Message (PGN 221).
+/// Fills out_duration, out_color, out_message (null-terminated).
+bool tryDecodeAogHardwareMessage(const uint8_t* payload, size_t payload_len,
+                                  uint8_t* out_duration,
+                                  uint8_t* out_color,
+                                  char* out_message, size_t out_msg_size);
 
 // ===================================================================
 // Utility

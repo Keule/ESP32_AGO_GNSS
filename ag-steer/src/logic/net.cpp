@@ -5,6 +5,7 @@
  * Sends:
  *   - GPS Main Out (PGN 0xD6) on port 5124  @ ~10 Hz
  *   - Steer Status Out (PGN 0xFD) on port 5126 @ ~10 Hz
+ *   - From Autosteer 2 (PGN 0xFA) on port 5126 @ ~10 Hz
  *
  * Receives:
  *   - Hello From AgIO (PGN 200)
@@ -13,6 +14,7 @@
  *   - Steer Data In (PGN 254)
  *
  * All frames use the AOG Ethernet protocol format.
+ * Reference: https://github.com/AgOpenGPS-Official/Boards/blob/main/PGN.md
  */
 
 #include "net.h"
@@ -24,9 +26,10 @@
 
 // ===================================================================
 // Internal: module IP address (for hello/subnet replies)
-// Default: 192.168.1.x – will be updated by subnet change.
+// Default: 192.168.1.70 – will be updated by subnet change.
 // ===================================================================
-static uint16_t s_module_address = 0x0101;  // 192.168.1.1
+static uint8_t s_module_ip[4] = {192, 168, 1, 70};
+static uint8_t s_module_subnet[3] = {255, 255, 255};
 
 // ===================================================================
 // Send interval tracking
@@ -54,17 +57,23 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
         case PGN_HELLO_FROM_AGIO: {
             AogHelloFromAgio msg;
             if (tryDecodeAogHelloFromAgio(payload, payload_len, &msg)) {
-                // Reply with steer hello
+                // Reply with steer hello (PGN=0x7E, Src=0x7E, Len=5)
+                // Includes current steer angle, sensor counts, switch byte
                 uint8_t reply_buf[32];
-                size_t len = encodeAogHelloReplySteer(reply_buf, sizeof(reply_buf),
-                                                       s_module_address);
-                if (len > 0) {
-                    hal_net_send(reply_buf, len, AOG_PORT_STEER);
-                    aogHexDump("NET: sent SteerHello", reply_buf, len);
+                {
+                    StateLock lock;
+                    int16_t angle = static_cast<int16_t>(g_nav.steer_angle_deg);
+                    uint16_t counts = 0;  // TODO: from actual sensor
+                    uint8_t sw = g_nav.safety_ok ? 0x00 : 0x80;
+                    size_t len = encodeAogHelloReplySteer(reply_buf, sizeof(reply_buf),
+                                                           angle, counts, sw);
+                    if (len > 0) {
+                        hal_net_send(reply_buf, len, AOG_PORT_STEER);
+                        aogHexDump("NET: sent SteerHello", reply_buf, len);
+                    }
                 }
-                // Also reply with GPS hello
-                len = encodeAogHelloReplyGps(reply_buf, sizeof(reply_buf),
-                                              s_module_address);
+                // Also reply with GPS hello (PGN=0x78, Src=0x78, Len=5)
+                size_t len = encodeAogHelloReplyGps(reply_buf, sizeof(reply_buf));
                 if (len > 0) {
                     hal_net_send(reply_buf, len, AOG_PORT_GPS);
                     aogHexDump("NET: sent GpsHello", reply_buf, len);
@@ -75,16 +84,19 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
 
         case PGN_SCAN_REQUEST: {
             if (tryDecodeAogScanRequest(payload, payload_len)) {
-                // Reply with steer subnet info
                 uint8_t reply_buf[32];
+
+                // Reply with steer subnet info (PGN=0xCB, Len=7)
                 size_t len = encodeAogSubnetReply(reply_buf, sizeof(reply_buf),
-                                                  AOG_SRC_STEER, s_module_address);
+                                                  AOG_SRC_STEER,
+                                                  s_module_ip, s_module_subnet);
                 if (len > 0) {
                     hal_net_send(reply_buf, len, AOG_PORT_STEER);
                 }
                 // Reply with GPS subnet info
                 len = encodeAogSubnetReply(reply_buf, sizeof(reply_buf),
-                                            0x78, s_module_address);
+                                            AOG_SRC_GPS_REPLY,
+                                            s_module_ip, s_module_subnet);
                 if (len > 0) {
                     hal_net_send(reply_buf, len, AOG_PORT_GPS);
                 }
@@ -95,14 +107,18 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
         case PGN_SUBNET_CHANGE: {
             AogSubnetChange msg;
             if (tryDecodeAogSubnetChange(payload, payload_len, &msg)) {
-                s_module_address = msg.address;
-                // Update destination IP: keep first two octets, replace last two
-                // Address is stored as a 16-bit value: high byte = .2, low byte = .3
-                g_net_cfg.dest_ip[2] = static_cast<uint8_t>((msg.address >> 8) & 0xFF);
-                g_net_cfg.dest_ip[3] = static_cast<uint8_t>(msg.address & 0xFF);
+                // Update destination IP: set first 3 octets from subnet change
+                g_net_cfg.dest_ip[0] = msg.ip_one;
+                g_net_cfg.dest_ip[1] = msg.ip_two;
+                g_net_cfg.dest_ip[2] = msg.ip_three;
+                g_net_cfg.dest_ip[3] = 255;  // broadcast
 
-                hal_log("NET: subnet changed, module address=0x%04X, dest=%u.%u.%u.%u",
-                        msg.address,
+                // Also update module's own IP to match subnet
+                s_module_ip[0] = msg.ip_one;
+                s_module_ip[1] = msg.ip_two;
+                s_module_ip[2] = msg.ip_three;
+
+                hal_log("NET: subnet changed, dest=%u.%u.%u.%u",
                         g_net_cfg.dest_ip[0], g_net_cfg.dest_ip[1],
                         g_net_cfg.dest_ip[2], g_net_cfg.dest_ip[3]);
             }
@@ -120,6 +136,20 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
                     StateLock lock;
                     g_nav.sog_mps = msg.speed / 100.0f;  // cm/s -> m/s
                 }
+            }
+            break;
+        }
+
+        case PGN_HARDWARE_MESSAGE: {
+            // Incoming hardware message from AgIO (display or command)
+            uint8_t dur = 0, color = 0;
+            char msg_text[128];
+            if (tryDecodeAogHardwareMessage(payload, payload_len,
+                                             &dur, &color,
+                                             msg_text, sizeof(msg_text))) {
+                hal_log("NET: HW message from AgIO: [%u] (col=%u) \"%s\"",
+                        (unsigned)dur, (unsigned)color, msg_text);
+                // TODO: display on connected LCD, or process commands
             }
             break;
         }
@@ -220,27 +250,41 @@ void netSendAogFrames(void) {
         tx_len = encodeAogGpsMainOut(tx_buf, sizeof(tx_buf), gps);
         if (tx_len > 0) {
             hal_net_send(tx_buf, tx_len, AOG_PORT_GPS);
-            aogHexDump("NET: tx GPS", tx_buf, tx_len);
         }
     }
 
     // ----------------------------------------------------------
     // 2. Steer Status Out (PGN 0xFD) -> AgIO port 5126
+    //    Note: heading and roll are degrees * 16 in this PGN
     // ----------------------------------------------------------
     {
         StateLock lock;
         int16_t angle_x100 = static_cast<int16_t>(g_nav.steer_angle_deg * 100.0f);
-        int16_t heading_x10 = static_cast<int16_t>(g_nav.heading_deg * 10.0f);
-        int16_t roll_x10    = static_cast<int16_t>(g_nav.roll_deg * 10.0f);
-        uint8_t switch_st   = g_nav.safety_ok ? 0x00 : 0x80;  // TODO: real switch bits
+        int16_t heading_x16 = static_cast<int16_t>(g_nav.heading_deg * 16.0f);
+        int16_t roll_x16    = static_cast<int16_t>(g_nav.roll_deg * 16.0f);
+        uint8_t switch_st   = g_nav.safety_ok ? 0x00 : 0x80;  // bit7 = safety
         uint8_t pwm_disp    = 0;  // TODO: from PID output
 
         tx_len = encodeAogSteerStatusOut(tx_buf, sizeof(tx_buf),
-                                          angle_x100, heading_x10, roll_x10,
+                                          angle_x100, heading_x16, roll_x16,
                                           switch_st, pwm_disp);
         if (tx_len > 0) {
             hal_net_send(tx_buf, tx_len, AOG_PORT_STEER);
-            aogHexDump("NET: tx SteerStatus", tx_buf, tx_len);
+        }
+    }
+
+    // ----------------------------------------------------------
+    // 3. From Autosteer 2 (PGN 0xFA) -> AgIO port 5126
+    //    Sensor value byte for steer angle sensor
+    // ----------------------------------------------------------
+    {
+        StateLock lock;
+        // Send raw sensor value (just low byte of steer angle for now)
+        uint8_t sensor_val = static_cast<uint8_t>(
+            static_cast<int16_t>(g_nav.steer_angle_deg) & 0xFF);
+        tx_len = encodeAogFromAutosteer2(tx_buf, sizeof(tx_buf), sensor_val);
+        if (tx_len > 0) {
+            hal_net_send(tx_buf, tx_len, AOG_PORT_STEER);
         }
     }
 }

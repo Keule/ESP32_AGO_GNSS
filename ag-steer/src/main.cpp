@@ -5,7 +5,7 @@
  * Target: LilyGO T-ETH-Lite-S3 (ESP32-S3-WROOM-1 + W5500 Ethernet)
  *
  * Two FreeRTOS tasks:
- *   - commTask  (Core 0): GNSS polling, Ethernet/UDP, AOG protocol
+ *   - commTask  (Core 0): GNSS polling, Ethernet/UDP, AOG protocol, HW status
  *   - controlTask (Core 1): 200 Hz control loop, PID, safety, actuators
  *
  * NOTE: All hardware init is done in hal_esp32_init_all() during setup().
@@ -22,6 +22,7 @@
 #include "logic/control.h"
 #include "logic/gnss.h"
 #include "logic/net.h"
+#include "logic/hw_status.h"
 
 // ===================================================================
 // Task handles
@@ -67,6 +68,10 @@ static void commTaskFunc(void* param) {
 
     const TickType_t poll_interval = pdMS_TO_TICKS(10);  // 100 Hz polling
 
+    // Hardware status update runs at ~1 Hz
+    static uint32_t s_last_hw_status_ms = 0;
+    static const uint32_t HW_STATUS_INTERVAL_MS = 1000;
+
     for (;;) {
         // Poll GNSS (main + heading)
         gnssPollMain();
@@ -77,6 +82,26 @@ static void commTaskFunc(void* param) {
 
         // Send periodic AOG frames (~10 Hz)
         netSendAogFrames();
+
+        // Hardware status monitoring (~1 Hz)
+        uint32_t now = hal_millis();
+        if (now - s_last_hw_status_ms >= HW_STATUS_INTERVAL_MS) {
+            s_last_hw_status_ms = now;
+
+            uint8_t err_count = hwStatusUpdate(
+                hal_net_is_connected(),     // Ethernet connected
+                g_nav.fix_quality >= 1,     // GNSS main has fix
+                true,                       // GNSS heading fix (TODO)
+                g_nav.safety_ok,            // Safety circuit OK
+                true,                       // Steer angle valid (TODO: actual check)
+                true                        // IMU valid (TODO: actual check)
+            );
+
+            // Log error count periodically
+            if (err_count > 0) {
+                hal_log("COMM: %u HW error(s) active", (unsigned)err_count);
+            }
+        }
 
         // Yield to IDLE task – prevents watchdog trigger
         vTaskDelay(poll_interval);
@@ -89,6 +114,15 @@ static void commTaskFunc(void* param) {
 void setup() {
     // Initialise ALL hardware (mutex, safety, SPI, GNSS, sensors, W5500)
     hal_esp32_init_all();
+
+    // Initialise hardware status monitoring
+    hwStatusInit();
+
+    // Report initial hardware status
+    if (!hal_net_is_connected()) {
+        hwStatusSendMessage(AOG_SRC_STEER, HW_SEV_ERROR, 0,
+                            "W5500 not detected");
+    }
 
     // Create control task on Core 1
     xTaskCreatePinnedToCore(
@@ -129,7 +163,7 @@ void loop() {
         s_last_status = now;
         StateLock lock;
         hal_log("STAT: lat=%.6f lon=%.6f fix=%u sog=%.1f heading=%.1f "
-                "steer=%.1f safety=%s pid_tgt=%.1f net=%s",
+                "steer=%.1f safety=%s pid_tgt=%.1f net=%s hw_err=%u",
                 g_nav.lat_deg, g_nav.lon_deg,
                 (unsigned)g_nav.fix_quality,
                 g_nav.sog_mps,
@@ -137,7 +171,8 @@ void loop() {
                 g_nav.steer_angle_deg,
                 g_nav.safety_ok ? "OK" : "KICK",
                 desiredSteerAngleDeg,
-                hal_net_is_connected() ? "UP" : "DOWN");
+                hal_net_is_connected() ? "UP" : "DOWN",
+                (unsigned)hwStatusErrorCount());
     }
 
     vTaskDelay(pdMS_TO_TICKS(100));

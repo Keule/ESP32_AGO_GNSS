@@ -11,16 +11,17 @@
  *
  * Or manually:
  *   cd pc_sim
- *   g++ -std=c++17 -O2 -Wall -I../lib -I../include -I. \\
- *       main_pc.cpp hal_pc/hal_impl.cpp \\
- *       ../lib/logic/global_state.cpp \\
- *       ../lib/logic/aog_udp_protocol.cpp \\
- *       ../lib/logic/gnss.cpp \\
- *       ../lib/logic/imu.cpp \\
- *       ../lib/logic/steer_angle.cpp \\
- *       ../lib/logic/actuator.cpp \\
- *       ../lib/logic/control.cpp \\
- *       ../lib/logic/net.cpp \\
+ *   g++ -std=c++17 -O2 -Wall -I../src -I../include -I. \
+ *       main_pc.cpp hal_pc/hal_impl.cpp \
+ *       ../src/logic/global_state.cpp \
+ *       ../src/logic/aog_udp_protocol.cpp \
+ *       ../src/logic/gnss.cpp \
+ *       ../src/logic/imu.cpp \
+ *       ../src/logic/steer_angle.cpp \
+ *       ../src/logic/actuator.cpp \
+ *       ../src/logic/control.cpp \
+ *       ../src/logic/net.cpp \
+ *       ../src/logic/hw_status.cpp \
  *       -o sim -lm -lpthread
  *
  * Run:
@@ -36,6 +37,7 @@
 #include "logic/steer_angle.h"
 #include "logic/actuator.h"
 #include "logic/net.h"
+#include "logic/hw_status.h"
 #include "logic/aog_udp_protocol.h"
 
 #include <cstdio>
@@ -70,6 +72,7 @@ int main() {
     gnssInit();
     controlInit();
     netInit();
+    hwStatusInit();
 
     hal_log("SIM: all systems initialised");
 
@@ -78,6 +81,54 @@ int main() {
     // ----------------------------------------------------------
     desiredSteerAngleDeg = 15.0f;
     hal_log("SIM: setpoint = %.1f deg", desiredSteerAngleDeg);
+
+    // ----------------------------------------------------------
+    // 3b. Test hardware message encoding
+    // ----------------------------------------------------------
+    {
+        uint8_t buf[AOG_MAX_FRAME];
+        printf("\n=== Hardware Message Test ===\n");
+
+        // Test 1: Error message (red)
+        size_t len = encodeAogHardwareMessage(buf, sizeof(buf),
+                                               AOG_SRC_STEER,
+                                               10, AOG_HWMSG_COLOR_RED,
+                                               "W5500 not detected");
+        if (len > 0) {
+            printf("HW MSG (red error, dur=10s, %zu bytes):\n", len);
+            aogHexDump("HWMsg", buf, len);
+            printf("  Src: 0x%02X  PGN: 0x%02X  Len: %u  CRC: 0x%02X\n",
+                   buf[2], buf[3], buf[4], buf[len-1]);
+            printf("  Duration: %u  Color: %u  Text: \"%s\"\n\n",
+                   buf[5], buf[6], (char*)(buf + 7));
+        }
+
+        // Test 2: Warning message (yellow)
+        len = encodeAogHardwareMessage(buf, sizeof(buf),
+                                       AOG_SRC_STEER,
+                                       AOG_HWMSG_DURATION_PERSIST, AOG_HWMSG_COLOR_YELLOW,
+                                       "GNSS no fix");
+        if (len > 0) {
+            printf("HW MSG (yellow warn, persist, %zu bytes):\n", len);
+            aogHexDump("HWMsg", buf, len);
+            printf("  Duration: %u  Color: %u  Text: \"%s\"\n\n",
+                   buf[5], buf[6], (char*)(buf + 7));
+        }
+
+        // Test 3: OK message (green)
+        len = encodeAogHardwareMessage(buf, sizeof(buf),
+                                       AOG_SRC_GPS,
+                                       3, AOG_HWMSG_COLOR_GREEN,
+                                       "All systems OK");
+        if (len > 0) {
+            printf("HW MSG (green ok, dur=3s, %zu bytes):\n", len);
+            aogHexDump("HWMsg", buf, len);
+            printf("  Duration: %u  Color: %u  Text: \"%s\"\n\n",
+                   buf[5], buf[6], (char*)(buf + 7));
+        }
+
+        printf("=== End Hardware Message Test ===\n\n");
+    }
 
     // ----------------------------------------------------------
     // 4. Main simulation loop
@@ -164,11 +215,11 @@ int main() {
                 uint8_t buf[AOG_MAX_FRAME];
                 StateLock lock;
                 int16_t angle_x100 = static_cast<int16_t>(g_nav.steer_angle_deg * 100.0f);
-                int16_t heading_x10 = static_cast<int16_t>(g_nav.heading_deg * 10.0f);
-                int16_t roll_x10    = static_cast<int16_t>(g_nav.roll_deg * 10.0f);
+                int16_t heading_x16 = static_cast<int16_t>(g_nav.heading_deg * 16.0f);
+                int16_t roll_x16    = static_cast<int16_t>(g_nav.roll_deg * 16.0f);
 
                 size_t len = encodeAogSteerStatusOut(buf, sizeof(buf),
-                                                      angle_x100, heading_x10, roll_x10,
+                                                      angle_x100, heading_x16, roll_x16,
                                                       g_nav.safety_ok ? 0 : 0x80, 128);
                 if (len > 0) {
                     printf("\n--- Steer Status Out (PGN 0xFD, %zu bytes) ---\n", len);
@@ -188,20 +239,50 @@ int main() {
             // Build and dump Hello Reply frames
             {
                 uint8_t buf[32];
-                size_t len = encodeAogHelloReplySteer(buf, sizeof(buf), 0x0146);
+
+                // Steer Hello Reply – new format: (angle, counts, switchbyte)
+                size_t len = encodeAogHelloReplySteer(buf, sizeof(buf),
+                                                       15,  // steer angle = 15 deg
+                                                       327, // sensor counts
+                                                       0x00 // switch byte
+                                                       );
                 if (len > 0) {
-                    printf("\n--- Hello Reply Steer (PGN=Src=0x7E, %zu bytes) ---\n", len);
+                    printf("\n--- Hello Reply Steer (PGN=Src=0x7E, Len=5, %zu bytes) ---\n", len);
                     aogHexDump("HelloSteer", buf, len);
                     printf("  Src: 0x%02X PGN: 0x%02X Len: %u CRC: 0x%02X\n",
                            buf[2], buf[3], buf[4], buf[len-1]);
+                    // Decode: AngleLo, AngleHi, CountsLo, CountsHi, Switch
+                    printf("  Angle: %d deg  Counts: %u  Switch: 0x%02X\n",
+                           (int)((int16_t)(buf[5] | (buf[6] << 8))),
+                           (unsigned)(buf[7] | (buf[8] << 8)),
+                           buf[9]);
                 }
 
-                len = encodeAogHelloReplyGps(buf, sizeof(buf), 0x0146);
+                // GPS Hello Reply
+                len = encodeAogHelloReplyGps(buf, sizeof(buf));
                 if (len > 0) {
-                    printf("\n--- Hello Reply GPS (PGN=Src=0x78, %zu bytes) ---\n", len);
+                    printf("\n--- Hello Reply GPS (PGN=Src=0x78, Len=5, %zu bytes) ---\n", len);
                     aogHexDump("HelloGps", buf, len);
                     printf("  Src: 0x%02X PGN: 0x%02X Len: %u CRC: 0x%02X\n",
                            buf[2], buf[3], buf[4], buf[len-1]);
+                }
+            }
+
+            // Build and dump Subnet Reply frame
+            {
+                uint8_t buf[32];
+                uint8_t ip[4] = {192, 168, 5, 70};
+                uint8_t subnet[3] = {255, 255, 255};
+                size_t len = encodeAogSubnetReply(buf, sizeof(buf),
+                                                  AOG_SRC_STEER, ip, subnet);
+                if (len > 0) {
+                    printf("\n--- Subnet Reply Steer (PGN=0xCB, Len=7, %zu bytes) ---\n", len);
+                    aogHexDump("SubnetReply", buf, len);
+                    printf("  Src: 0x%02X PGN: 0x%02X Len: %u CRC: 0x%02X\n",
+                           buf[2], buf[3], buf[4], buf[len-1]);
+                    printf("  IP: %u.%u.%u.%u  Subnet: %u.%u.%u\n",
+                           buf[5], buf[6], buf[7], buf[8],
+                           buf[9], buf[10], buf[11]);
                 }
             }
 

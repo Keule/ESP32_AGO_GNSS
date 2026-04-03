@@ -183,4 +183,4 @@
  /home/z/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/esp_system/include/esp_task_wdt.h \
  src/hal/hal.h src/hal_esp32/hal_impl.h src/logic/global_state.h \
  src/logic/control.h src/logic/gnss.h src/logic/net.h \
- src/logic/aog_udp_protocol.h
+ src/logic/aog_udp_protocol.h src/logic/hw_status.h
