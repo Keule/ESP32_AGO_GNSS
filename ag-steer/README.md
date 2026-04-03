@@ -41,10 +41,8 @@ ag-steer/
 ├── include/                        # Projektweite Header (globaler Include-Pfad)
 │   └── hardware_pins.h             #   GPIO-Pin-Definitionen
 │
-├── src/                            # ESP32 Firmware Entry Point
-│   └── main.cpp                    #   Arduino setup()/loop() + FreeRTOS-Tasks
-│
-├── lib/                            # Plattformunabhängiger Code (Library Include-Pfad)
+├── src/                            # Firmware-Quellcode (rekursiv kompiliert)
+│   ├── main.cpp                    #   Arduino setup()/loop() + FreeRTOS-Tasks
 │   ├── hal/                        #   Hardware Abstraction Layer (C-API)
 │   │   └── hal.h                   #     Alle HW-Funktionen als pure C-Deklarationen
 │   ├── hal_esp32/                  #   ESP32-S3 HAL-Implementierung
@@ -72,10 +70,9 @@ ag-steer/
 
 | Include in Source | Aufgelöst über | Pfad |
 |---|---|---|
-| `"hal/hal.h"` | `-I lib` | `lib/hal/hal.h` |
-| `"hal_esp32/hal_impl.h"` | `-I lib` | `lib/hal_esp32/hal_impl.h` |
-| `"logic/global_state.h"` | `-I lib` | `lib/logic/global_state.h` |
-| `"global_state.h"` | PlatformIO lib path | `lib/logic/global_state.h` |
+| `"hal/hal.h"` | `src/` (auto) | `src/hal/hal.h` |
+| `"hal_esp32/hal_impl.h"` | `src/` (auto) | `src/hal_esp32/hal_impl.h` |
+| `"logic/global_state.h"` | `src/` (auto) | `src/logic/global_state.h` |
 | `"hardware_pins.h"` | `include/` (auto) | `include/hardware_pins.h` |
 
 ---
@@ -176,14 +173,14 @@ Beide UARTs: **460800 Baud, 8N1**
 │                    src/                          │  Entry Point
 │             main.cpp (Arduino setup/loop)       │  FreeRTOS-Tasks
 ├─────────────────────────────────────────────────┤
-│                   lib/logic/                     │
+│                 src/logic/                       │
 │  gnss · imu · steer_angle · actuator · control  │  Reine C++ Logik
 │  net · aog_udp_protocol · global_state          │  Keine HW-Abhängigkeit
 ├─────────────────────────────────────────────────┤
-│                lib/hal/ (Schnittstelle)          │  C-API
+│                src/hal/ (Schnittstelle)          │  C-API
 │  hal_millis · hal_gnss_* · hal_imu_* · hal_net  │
 ├─────────────────────────────────────────────────┤
-│            lib/hal_esp32/  Implementierung       │  Arduino/FreeRTOS
+│          src/hal_esp32/  Implementierung        │  Arduino/FreeRTOS
 │  HardwareSerial, Ethernet3, SPI, Semaphore      │
 ├─────────────────────────────────────────────────┤
 │            include/hardware_pins.h               │  Pin-Definitionen
@@ -215,7 +212,7 @@ Das ESP32-Firmware nutzt zwei FreeRTOS-Tasks, die auf separaten Kernen laufen:
 
 ### Globaler Zustand
 
-Definiert in [`lib/logic/global_state.h`](lib/logic/global_state.h):
+Definiert in [`src/logic/global_state.h`](src/logic/global_state.h):
 
 ```cpp
 struct NavigationState {
@@ -236,7 +233,7 @@ extern volatile float desiredSteerAngleDeg;  // Sollwinkel von AgIO
 
 ## Komponenten
 
-### GNSS ([`lib/logic/gnss.h`](lib/logic/gnss.h))
+### GNSS ([`src/logic/gnss.h`](src/logic/gnss.h))
 
 | Rolle | UART | Funktion |
 |-------|------|----------|
@@ -245,19 +242,19 @@ extern volatile float desiredSteerAngleDeg;  // Sollwinkel von AgIO
 
 NMEA-Parser: **GGA** (lat, lon, alt, fix), **RMC** (sog, cog). 460800 Baud.
 
-### IMU ([`lib/logic/imu.h`](lib/logic/imu.h))
+### IMU ([`src/logic/imu.h`](src/logic/imu.h))
 
 BNO085 über SPI2 (CS=GPIO10). Liest `yaw_rate_dps` und `roll_deg`. SPI-Transaktionsstruktur korrekt, SH-2 Protokoll TODO.
 
-### Lenkwinkelsensor ([`lib/logic/steer_angle.h`](lib/logic/steer_angle.h))
+### Lenkwinkelsensor ([`src/logic/steer_angle.h`](src/logic/steer_angle.h))
 
 SPI2 (CS=GPIO9). `steerAngleReadDeg()` → Winkel in Grad. Sensorprotokoll TODO.
 
-### Aktuator ([`lib/logic/actuator.h`](lib/logic/actuator.h))
+### Aktuator ([`src/logic/actuator.h`](src/logic/actuator.h))
 
 SPI2 (CS=GPIO8). `actuatorWriteCommand(uint16_t cmd)`. Bei `safety_ok == false` → cmd = 0.
 
-### PID-Regler ([`lib/logic/control.h`](lib/logic/control.h))
+### PID-Regler ([`src/logic/control.h`](src/logic/control.h))
 
 | Parameter | Standard |
 |-----------|----------|
@@ -268,14 +265,14 @@ SPI2 (CS=GPIO8). `actuatorWriteCommand(uint16_t cmd)`. Bei `safety_ok == false` 
 
 Anti-Windup aktiv, Fehler auf [-180°, +180°] gewrappt.
 
-### Netzwerk ([`lib/logic/net.h`](lib/logic/net.h))
+### Netzwerk ([`src/logic/net.h`](src/logic/net.h))
 
 - **Sendet @ 10 Hz:** GPS Main Out (Port 5124), Steer Status Out (Port 5126)
 - **Empfängt:** Hello (→ Reply), Scan (→ Reply), SubnetChange (→ IP Update), SteerDataIn (→ Sollwinkel)
 
-### HAL ([`lib/hal/hal.h`](lib/hal/hal.h))
+### HAL ([`src/hal/hal.h`](src/hal/hal.h))
 
-Reine C-API mit Implementierungen in `lib/hal_esp32/` und `pc_sim/hal_pc/`. Keine Arduino-Header in der Schnittstelle.
+Reine C-API mit Implementierungen in `src/hal_esp32/` und `pc_sim/hal_pc/`. Keine Arduino-Header in der Schnittstelle.
 
 ---
 
@@ -361,13 +358,13 @@ board          = esp32-s3-devkitc-1
 board_build.flash_mode   = qio
 board_build.flash_size   = 16MB
 board_build.psram_mode  = opi
-lib_deps       = epigrammi/Ethernet3 @ ^1.0.0
+lib_deps       = sstaub/Ethernet3 @ ^1.6.0
 upload_speed    = 921600
 ```
 
 ### IP-Konfiguration
 
-Standard-Werte in [`lib/hal_esp32/hal_impl.cpp`](lib/hal_esp32/hal_impl.cpp):
+Standard-Werte in [`src/hal_esp32/hal_impl.cpp`](src/hal_esp32/hal_impl.cpp):
 
 | Parameter | Standard |
 |-----------|----------|
@@ -380,7 +377,7 @@ Wird automatisch durch **Subnet Change** (PGN 201) von AgIO aktualisiert.
 
 ### PID-Parameter
 
-In [`lib/logic/control.cpp`](lib/logic/control.cpp) – `controlInit()`:
+In [`src/logic/control.cpp`](src/logic/control.cpp) – `controlInit()`:
 
 ```cpp
 pidInit(&s_steer_pid, 1.0f, 0.0f, 0.01f, 0.0f, 65535.0f);

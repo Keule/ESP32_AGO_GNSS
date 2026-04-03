@@ -9,19 +9,19 @@
 
 CXX      := g++
 CXXFLAGS := -std=c++17 -O2 -Wall
-INCLUDES := -I../lib -I../include -I.
+INCLUDES := -I../src -I../include -I.
 
 # --- Source files ---
 MAIN     := main_pc.cpp
 HAL_PC   := hal_pc/hal_impl.cpp
-LOGIC    := ../lib/logic/global_state.cpp \
-           ../lib/logic/aog_udp_protocol.cpp \
-           ../lib/logic/gnss.cpp \
-           ../lib/logic/imu.cpp \
-           ../lib/logic/steer_angle.cpp \
-           ../lib/logic/actuator.cpp \
-           ../lib/logic/control.cpp \
-           ../lib/logic/net.cpp
+LOGIC    := ../src/logic/global_state.cpp \
+           ../src/logic/aog_udp_protocol.cpp \
+           ../src/logic/gnss.cpp \
+           ../src/logic/imu.cpp \
+           ../src/logic/steer_angle.cpp \
+           ../src/logic/actuator.cpp \
+           ../src/logic/control.cpp \
+           ../src/logic/net.cpp
 
 SRCS     := $(MAIN) $(HAL_PC) $(LOGIC)
 TARGET   := sim
