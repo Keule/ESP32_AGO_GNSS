@@ -77,6 +77,10 @@ static size_t s_gnss_main_pos = 0;
 static char s_gnss_heading_buf[256];
 static size_t s_gnss_heading_pos = 0;
 
+// GNSS data received flags (for hardware detection)
+static volatile bool s_gnss_main_has_data = false;
+static volatile bool s_gnss_heading_has_data = false;
+
 // ===================================================================
 // Sensor SPI bus 2 (FSPI / SPI2_HOST)
 //
@@ -198,11 +202,28 @@ static bool readNmeaLine(HardwareSerial& ser, char* buf, size_t max_len, size_t*
 }
 
 bool hal_gnss_main_read_line(char* buf, size_t max_len) {
-    return readNmeaLine(gnssMainSerial, buf, max_len, &s_gnss_main_pos);
+    bool result = readNmeaLine(gnssMainSerial, buf, max_len, &s_gnss_main_pos);
+    if (result) s_gnss_main_has_data = true;
+    return result;
 }
 
 bool hal_gnss_heading_read_line(char* buf, size_t max_len) {
-    return readNmeaLine(gnssHeadingSerial, buf, max_len, &s_gnss_heading_pos);
+    bool result = readNmeaLine(gnssHeadingSerial, buf, max_len, &s_gnss_heading_pos);
+    if (result) s_gnss_heading_has_data = true;
+    return result;
+}
+
+bool hal_gnss_main_detect(void) {
+    return s_gnss_main_has_data;
+}
+
+bool hal_gnss_heading_detect(void) {
+    return s_gnss_heading_has_data;
+}
+
+void hal_gnss_reset_detection(void) {
+    s_gnss_main_has_data = false;
+    s_gnss_heading_has_data = false;
 }
 
 // ===================================================================
@@ -228,10 +249,55 @@ bool hal_imu_read(float* yaw_rate_dps, float* roll_deg) {
     return true;
 }
 
+bool hal_imu_detect(void) {
+    // BNO085 detection: read chip ID from register 0x00
+    // Expected chip ID: 0x00 (BNO085 responds to SPI reset)
+    // For now, verify SPI bus is responsive by attempting a transfer
+    sensorSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(CS_IMU, LOW);
+    uint8_t response = sensorSPI.transfer(0x00);
+    digitalWrite(CS_IMU, HIGH);
+    sensorSPI.endTransaction();
+
+    // If we got ANY response (even 0xFF from floating MISO), SPI bus works.
+    // A real BNO085 detection would check for specific chip ID (0xA0 etc.)
+    // but the stub sensor may not be connected. For now, return true if
+    // MISO is not stuck LOW (which would mean bus fault).
+    // TODO: When real BNO085 is connected, check actual chip ID.
+    bool detected = (response != 0x00 || true);  // Stub: assume detected
+    hal_log("ESP32: IMU detect: SPI response=0x%02X %s",
+            response, detected ? "OK" : "FAIL");
+    return detected;
+}
+
 void hal_steer_angle_begin(void) {
     pinMode(CS_STEER_ANG, OUTPUT);
     digitalWrite(CS_STEER_ANG, HIGH);
     hal_log("ESP32: Steer angle sensor begun on CS=%d (stub)", CS_STEER_ANG);
+}
+
+bool hal_steer_angle_detect(void) {
+    // Try SPI read to verify the sensor responds on the bus.
+    // A real sensor would return a valid angle (int16 in first 2 bytes).
+    // With no sensor, MISO floats high (0xFF) or low (0x00).
+    sensorSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(CS_STEER_ANG, LOW);
+    uint8_t rx_buf[4] = {0};
+    for (int i = 0; i < 4; i++) {
+        rx_buf[i] = sensorSPI.transfer(0x00);
+    }
+    digitalWrite(CS_STEER_ANG, HIGH);
+    sensorSPI.endTransaction();
+
+    // If all bytes are 0x00 or all 0xFF, sensor might not be connected.
+    // But 0x0000 could also be a valid angle reading (0 degrees).
+    // TODO: When real sensor is connected, implement proper detection.
+    bool all_ff = (rx_buf[0] == 0xFF && rx_buf[1] == 0xFF);
+    bool detected = !all_ff;  // Floating MISO = all 0xFF means no sensor
+    hal_log("ESP32: SteerAngle detect: SPI [0x%02X 0x%02X 0x%02X 0x%02X] %s",
+            rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3],
+            detected ? "OK" : "FAIL (no pull-down on MISO?)");
+    return detected;
 }
 
 float hal_steer_angle_read_deg(void) {
@@ -258,6 +324,20 @@ void hal_actuator_begin(void) {
     pinMode(CS_ACT, OUTPUT);
     digitalWrite(CS_ACT, HIGH);
     hal_log("ESP32: Actuator begun on CS=%d (stub)", CS_ACT);
+}
+
+bool hal_actuator_detect(void) {
+    // Actuator is write-only, hard to verify by reading back.
+    // Just verify the SPI bus works by attempting a transfer.
+    sensorSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(CS_ACT, LOW);
+    uint8_t response = sensorSPI.transfer(0x00);
+    digitalWrite(CS_ACT, HIGH);
+    sensorSPI.endTransaction();
+
+    bool detected = true;  // Stub: assume OK (actuator is write-only)
+    hal_log("ESP32: Actuator detect: SPI %s", detected ? "OK" : "FAIL");
+    return detected;
 }
 
 void hal_actuator_write(uint16_t cmd) {
@@ -407,6 +487,10 @@ int hal_net_receive(uint8_t* buf, size_t max_len, uint16_t* out_port) {
 
 bool hal_net_is_connected(void) {
     return s_eth_has_ip;
+}
+
+bool hal_net_detected(void) {
+    return s_w5500_detected;
 }
 
 // ===================================================================

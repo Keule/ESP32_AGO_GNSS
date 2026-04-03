@@ -18,18 +18,12 @@
  */
 
 #include "net.h"
+#include "modules.h"
 #include "control.h"
 #include "global_state.h"
 #include "hal/hal.h"
 
 #include <cstring>
-
-// ===================================================================
-// Internal: module IP address (for hello/subnet replies)
-// Default: 192.168.1.70 – will be updated by subnet change.
-// ===================================================================
-static uint8_t s_module_ip[4] = {192, 168, 1, 70};
-static uint8_t s_module_subnet[3] = {255, 255, 255};
 
 // ===================================================================
 // Send interval tracking
@@ -57,49 +51,19 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
         case PGN_HELLO_FROM_AGIO: {
             AogHelloFromAgio msg;
             if (tryDecodeAogHelloFromAgio(payload, payload_len, &msg)) {
-                // Reply with steer hello (PGN=0x7E, Src=0x7E, Len=5)
-                // Includes current steer angle, sensor counts, switch byte
-                uint8_t reply_buf[32];
-                {
-                    StateLock lock;
-                    int16_t angle = static_cast<int16_t>(g_nav.steer_angle_deg);
-                    uint16_t counts = 0;  // TODO: from actual sensor
-                    uint8_t sw = g_nav.safety_ok ? 0x00 : 0x80;
-                    size_t len = encodeAogHelloReplySteer(reply_buf, sizeof(reply_buf),
-                                                           angle, counts, sw);
-                    if (len > 0) {
-                        hal_net_send(reply_buf, len, AOG_PORT_STEER);
-                        aogHexDump("NET: sent SteerHello", reply_buf, len);
-                    }
-                }
-                // Also reply with GPS hello (PGN=0x78, Src=0x78, Len=5)
-                size_t len = encodeAogHelloReplyGps(reply_buf, sizeof(reply_buf));
-                if (len > 0) {
-                    hal_net_send(reply_buf, len, AOG_PORT_GPS);
-                    aogHexDump("NET: sent GpsHello", reply_buf, len);
-                }
+                hal_log("NET: Hello from AgIO (module=0x%02X, ver=%u) -> sending ALL module hellos",
+                        (unsigned)msg.moduleId, (unsigned)msg.agioVersion);
+                // Send hello reply for ALL enabled modules (Steer + GPS)
+                modulesSendHellos();
             }
             break;
         }
 
         case PGN_SCAN_REQUEST: {
             if (tryDecodeAogScanRequest(payload, payload_len)) {
-                uint8_t reply_buf[32];
-
-                // Reply with steer subnet info (PGN=0xCB, Len=7)
-                size_t len = encodeAogSubnetReply(reply_buf, sizeof(reply_buf),
-                                                  AOG_SRC_STEER,
-                                                  s_module_ip, s_module_subnet);
-                if (len > 0) {
-                    hal_net_send(reply_buf, len, AOG_PORT_STEER);
-                }
-                // Reply with GPS subnet info
-                len = encodeAogSubnetReply(reply_buf, sizeof(reply_buf),
-                                            AOG_SRC_GPS_REPLY,
-                                            s_module_ip, s_module_subnet);
-                if (len > 0) {
-                    hal_net_send(reply_buf, len, AOG_PORT_GPS);
-                }
+                hal_log("NET: Scan request -> sending ALL module subnet replies");
+                // Send subnet reply for ALL enabled modules
+                modulesSendSubnetReplies();
             }
             break;
         }
@@ -112,11 +76,6 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
                 g_net_cfg.dest_ip[1] = msg.ip_two;
                 g_net_cfg.dest_ip[2] = msg.ip_three;
                 g_net_cfg.dest_ip[3] = 255;  // broadcast
-
-                // Also update module's own IP to match subnet
-                s_module_ip[0] = msg.ip_one;
-                s_module_ip[1] = msg.ip_two;
-                s_module_ip[2] = msg.ip_three;
 
                 hal_log("NET: subnet changed, dest=%u.%u.%u.%u",
                         g_net_cfg.dest_ip[0], g_net_cfg.dest_ip[1],

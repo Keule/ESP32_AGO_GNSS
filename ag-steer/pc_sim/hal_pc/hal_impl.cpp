@@ -124,6 +124,19 @@ bool hal_gnss_heading_read_line(char* buf, size_t max_len) {
     return false;
 }
 
+bool hal_gnss_main_detect(void) {
+    return s_gnss_main_tick > 0;  // Has emitted at least one sentence
+}
+
+bool hal_gnss_heading_detect(void) {
+    return s_gnss_heading_tick > 0;  // Has emitted at least one sentence
+}
+
+void hal_gnss_reset_detection(void) {
+    s_gnss_main_tick = 0;
+    s_gnss_heading_tick = 0;
+}
+
 // ===================================================================
 // SPI Sensors / Actuator – simulated values
 // ===================================================================
@@ -147,8 +160,18 @@ bool hal_imu_read(float* yaw_rate_dps, float* roll_deg) {
     return true;
 }
 
+bool hal_imu_detect(void) {
+    hal_log("PC HAL: IMU detect: OK (simulated)");
+    return true;
+}
+
 void hal_steer_angle_begin(void) {
     hal_log("PC HAL: steer angle sensor begun (simulated)");
+}
+
+bool hal_steer_angle_detect(void) {
+    hal_log("PC HAL: SteerAngle detect: OK (simulated)");
+    return true;
 }
 
 float hal_steer_angle_read_deg(void) {
@@ -160,6 +183,11 @@ float hal_steer_angle_read_deg(void) {
 
 void hal_actuator_begin(void) {
     hal_log("PC HAL: actuator begun (simulated)");
+}
+
+bool hal_actuator_detect(void) {
+    hal_log("PC HAL: Actuator detect: OK (simulated)");
+    return true;
 }
 
 void hal_actuator_write(uint16_t cmd) {
@@ -192,6 +220,10 @@ int hal_net_receive(uint8_t* buf, size_t max_len, uint16_t* out_port) {
 }
 
 bool hal_net_is_connected(void) {
+    return true;
+}
+
+bool hal_net_detected(void) {
     return true;
 }
 

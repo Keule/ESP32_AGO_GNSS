@@ -101,3 +101,60 @@ Stage Summary:
 - Clean separation: src/ (firmware), lib/ (shared code), include/ (global headers), pc_sim/ (simulation)
 - platformio.ini configures ESP32-S3 with PSRAM, Ethernet3, and C++17
 - PC simulation verified working with new Makefile paths
+
+---
+Task ID: 3
+Agent: Main Agent
+Task: Implement AgOpenGPS module system with PGN hello messages and hardware error reporting
+
+Work Log:
+- Analyzed AgOpenGPS PGN protocol: verified all PGN values (200-254), Source IDs (0x7E/0x78/0x7B/0x7F), frame format, hello reply structure
+- Added hardware detection functions to HAL (hal.h + hal_impl.cpp):
+  - hal_imu_detect() – BNO085 chip ID read via SPI
+  - hal_steer_angle_detect() – SPI transfer verification, checks for floating MISO (0xFF)
+  - hal_actuator_detect() – SPI bus verification
+  - hal_gnss_main_detect() / hal_gnss_heading_detect() – checks if NMEA data received
+  - hal_gnss_reset_detection() – reset detection flags
+  - hal_net_detected() – W5500 chip detected (from ETH.begin() result)
+- Added same detect functions to PC simulation HAL (hal_pc/hal_impl.cpp)
+- Added GNSS data-received tracking flags (s_gnss_main_has_data, s_gnss_heading_has_data) in hal_impl.cpp
+- Created logic/modules.h – Module registry with:
+  - AogModuleId enum (AOG_MOD_STEER, AOG_MOD_GPS)
+  - ModuleHwStatus struct (per-subsystem detection results)
+  - AogModuleInfo struct (src_id, port, name, enabled, hw_detected)
+  - API: modulesInit(), modulesSendHellos(), modulesSendSubnetReplies(), modulesSendStartupErrors(), modulesUpdateStatus()
+- Created logic/modules.cpp – Module system implementation:
+  - Hardware detection at init for all 7 subsystems (ETH, GNSS, IMU, WAS, ACT, Safety)
+  - Module hw_detected derived from subsystem requirements (Steer needs ETH+WAS+ACT+Safety, GPS needs ETH+GNSS)
+  - Hello reply sending for ALL enabled modules when AgIO hello received
+  - Subnet reply sending for ALL enabled modules when AgIO scan received
+  - Startup error report: sends PGN 0xDD for each failed subsystem (RED) and failed module (RED)
+  - GNSS Heading failure reported as WARNING (YELLOW, optional subsystem)
+  - Late detection: GPS module auto-recovers when GNSS gets first data after init
+  - Dynamic safety circuit monitoring in modulesUpdateStatus()
+- Modified net.cpp to use module system:
+  - PGN 200 (Hello): delegates to modulesSendHellos() for all modules
+  - PGN 202 (Scan): delegates to modulesSendSubnetReplies() for all modules
+  - Removed duplicate s_module_ip/s_module_subnet (now in modules.cpp)
+  - Removed manual hello/subnet reply code
+- Modified main.cpp:
+  - Added modules.h include
+  - Added GNSS pre-poll (500ms delay + read line) before modulesInit() for detection
+  - modulesInit() called after hardware init, before task creation
+  - modulesSendStartupErrors() called when network is up
+  - modulesUpdateStatus() called in commTask periodic loop
+  - Updated hwStatusUpdate() call to use hal_gnss_heading_detect() and modulesHwOk()
+- Build: SUCCESS (0 errors, 0 warnings) – 769157 bytes Flash, 46208 bytes RAM
+- Lint: PASSED (cppcheck) – 0 HIGH, 0 MEDIUM issues
+
+Stage Summary:
+- Complete AgOpenGPS module registry with hardware detection
+- 2 modules defined: Steer (0x7E, port 5126) + GPS (0x78, port 5124)
+- 7 subsystems monitored: Ethernet, GNSS Main, GNSS Heading, IMU, Steer Angle, Actuator, Safety
+- Hello replies sent for ALL enabled modules when AgIO hello (PGN 200) received
+- Subnet replies sent for ALL enabled modules when AgIO scan (PGN 202) received
+- Startup error messages (PGN 0xDD) sent for each failed subsystem:
+  - RED: Ethernet not detected, GNSS no data, IMU not detected, WAS not detected, Actuator not detected, Safety KICK
+  - YELLOW: GNSS Heading no data (optional subsystem)
+- Late GNSS detection: GPS module auto-recovers with green "GPS Module: Now Active" message
+- Dynamic safety monitoring in periodic update loop

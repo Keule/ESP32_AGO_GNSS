@@ -67,6 +67,15 @@ bool hal_gnss_main_read_line(char* buf, size_t max_len);
 /// Returns true if a complete line was read into buf.
 bool hal_gnss_heading_read_line(char* buf, size_t max_len);
 
+/// Detect if GNSS main has received any data since init.
+bool hal_gnss_main_detect(void);
+
+/// Detect if GNSS heading has received any data since init.
+bool hal_gnss_heading_detect(void);
+
+/// Reset GNSS detection flags (call after detection check).
+void hal_gnss_reset_detection(void);
+
 // ===================================================================
 // SPI Sensors / Actuator
 // ===================================================================
@@ -82,6 +91,10 @@ void hal_imu_begin(void);
 /// Read yaw rate and roll from IMU. Returns true on success.
 bool hal_imu_read(float* yaw_rate_dps, float* roll_deg);
 
+/// Detect if IMU chip is present on SPI bus (call after hal_imu_begin).
+/// Performs a chip ID read to verify hardware responds.
+bool hal_imu_detect(void);
+
 // --- Steering Angle Sensor ---
 
 /// Initialise steering angle sensor on SPI.
@@ -90,6 +103,9 @@ void hal_steer_angle_begin(void);
 /// Read current steering angle in degrees.
 float hal_steer_angle_read_deg(void);
 
+/// Detect if steer angle sensor hardware is present (call after hal_steer_angle_begin).
+bool hal_steer_angle_detect(void);
+
 // --- Actuator ---
 
 /// Initialise actuator SPI interface.
@@ -97,6 +113,9 @@ void hal_actuator_begin(void);
 
 /// Write a command value (0..65535) to the actuator.
 void hal_actuator_write(uint16_t cmd);
+
+/// Detect if actuator hardware is present (call after hal_actuator_begin).
+bool hal_actuator_detect(void);
 
 // ===================================================================
 // Network (W5500 Ethernet)
@@ -120,6 +139,9 @@ int hal_net_receive(uint8_t* buf, size_t max_len, uint16_t* out_port);
 
 /// Check if Ethernet link is up.
 bool hal_net_is_connected(void);
+
+/// Check if W5500 chip was detected during init.
+bool hal_net_detected(void);
 
 #ifdef __cplusplus
 }

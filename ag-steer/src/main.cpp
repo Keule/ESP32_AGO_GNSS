@@ -22,6 +22,7 @@
 #include "logic/control.h"
 #include "logic/gnss.h"
 #include "logic/net.h"
+#include "logic/modules.h"
 #include "logic/hw_status.h"
 
 // ===================================================================
@@ -88,13 +89,17 @@ static void commTaskFunc(void* param) {
         if (now - s_last_hw_status_ms >= HW_STATUS_INTERVAL_MS) {
             s_last_hw_status_ms = now;
 
+            // Update dynamic module status (late GNSS detection, safety changes)
+            modulesUpdateStatus();
+
+            // Hardware status monitoring via hw_status subsystem
             uint8_t err_count = hwStatusUpdate(
                 hal_net_is_connected(),     // Ethernet connected
                 g_nav.fix_quality >= 1,     // GNSS main has fix
-                true,                       // GNSS heading fix (TODO)
+                hal_gnss_heading_detect(),  // GNSS heading has data
                 g_nav.safety_ok,            // Safety circuit OK
                 true,                       // Steer angle valid (TODO: actual check)
-                true                        // IMU valid (TODO: actual check)
+                modulesHwOk(AOG_MOD_STEER)  // Module-level: all steer subsystems OK
             );
 
             // Log error count periodically
@@ -115,13 +120,32 @@ void setup() {
     // Initialise ALL hardware (mutex, safety, SPI, GNSS, sensors, W5500)
     hal_esp32_init_all();
 
+    // Brief delay to let GNSS receivers send first NMEA sentences
+    // (needed for hardware detection before module init)
+    hal_delay_ms(500);
+
+    // Poll GNSS briefly to populate detection flags
+    { char line[256]; hal_gnss_main_read_line(line, sizeof(line)); }
+    { char line[256]; hal_gnss_heading_read_line(line, sizeof(line)); }
+
+    // Initialise module system – detect hardware for all modules
+    modulesInit();
+
     // Initialise hardware status monitoring
     hwStatusInit();
 
-    // Report initial hardware status
-    if (!hal_net_is_connected()) {
-        hwStatusSendMessage(AOG_SRC_STEER, HW_SEV_ERROR, 0,
-                            "W5500 not detected");
+    // Network is already initialised by hal_esp32_init_all()
+    // (hal_net_init was called there, ETH link should be established)
+
+    // Report initial hardware errors to AgIO
+    if (hal_net_is_connected()) {
+        // Small delay to ensure UDP socket is ready
+        hal_delay_ms(100);
+        modulesSendStartupErrors();
+    } else {
+        // Network not up yet – errors will be sent when network comes up
+        // via the periodic hwStatusUpdate() in commTask
+        hal_log("SETUP: network not up, startup errors deferred");
     }
 
     // Create control task on Core 1
