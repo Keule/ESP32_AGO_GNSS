@@ -6,12 +6,21 @@
  * Simulates sensor data, runs PID control, encodes AOG frames, and
  * prints hex dumps of generated GPS and Steer status frames.
  *
- * Build command:
- *   cd ag-steer
- *   g++ -std=c++17 -O2 -Wall -I./ -I./logic -I./hal -I./hal_pc \
- *       firmware_pc/main_pc.cpp hal_pc/hal_impl.cpp logic/global_state.cpp \
- *       logic/aog_udp_protocol.cpp logic/gnss.cpp logic/imu.cpp \
- *       logic/steer_angle.cpp logic/actuator.cpp logic/control.cpp logic/net.cpp \
+ * Build:
+ *   cd pc_sim && make
+ *
+ * Or manually:
+ *   cd pc_sim
+ *   g++ -std=c++17 -O2 -Wall -I../lib -I../include -I. \\
+ *       main_pc.cpp hal_pc/hal_impl.cpp \\
+ *       ../lib/logic/global_state.cpp \\
+ *       ../lib/logic/aog_udp_protocol.cpp \\
+ *       ../lib/logic/gnss.cpp \\
+ *       ../lib/logic/imu.cpp \\
+ *       ../lib/logic/steer_angle.cpp \\
+ *       ../lib/logic/actuator.cpp \\
+ *       ../lib/logic/control.cpp \\
+ *       ../lib/logic/net.cpp \\
  *       -o sim -lm -lpthread
  *
  * Run:

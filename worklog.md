@@ -67,3 +67,37 @@ Stage Summary:
 - Control loop verified at 200 Hz, PID converges correctly
 - All CRC checksums verified correct
 - ESP32 firmware ready for PlatformIO/Arduino IDE build (needs Ethernet3 library)
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Restructure project for PlatformIO/VS Code ESP32-S3 development
+
+Work Log:
+- Analyzed existing project structure (18 files across 6 directories)
+- Created PlatformIO-standard directories: src/, lib/, include/, pc_sim/
+- Moved files to new locations:
+  - firmware_esp32/src/main.cpp → src/main.cpp
+  - hardware_pins.h → include/hardware_pins.h
+  - hal/ → lib/hal/
+  - hal_esp32/ → lib/hal_esp32/
+  - logic/ → lib/logic/
+  - hal_pc/ + firmware_pc/ → pc_sim/hal_pc/ + pc_sim/main_pc.cpp
+- Removed old empty directories and stale binary (sim)
+- Created platformio.ini with ESP32-S3 configuration:
+  - Board: esp32-s3-devkitc-1 (16MB Flash, 8MB OPI PSRAM)
+  - Build flags: -I lib (for cross-directory includes like "hal/hal.h")
+  - lib_deps: epigrammi/Ethernet3 @ ^1.0.0
+  - Upload speed: 921600 baud
+  - PSRAM: OPI mode enabled
+- Verified all include paths resolve correctly with new structure (zero changes needed)
+- Created pc_sim/Makefile for PC simulation build
+- Updated pc_sim/main_pc.cpp build command comments
+- Built and tested PC simulation: 0 warnings, all tests pass
+- Rewrote README.md completely for PlatformIO workflow (Quick Start, project structure, build instructions)
+
+Stage Summary:
+- PlatformIO-compliant project structure
+- Clean separation: src/ (firmware), lib/ (shared code), include/ (global headers), pc_sim/ (simulation)
+- platformio.ini configures ESP32-S3 with PSRAM, Ethernet3, and C++17
+- PC simulation verified working with new Makefile paths
