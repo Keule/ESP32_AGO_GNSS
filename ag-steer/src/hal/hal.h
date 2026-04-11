@@ -83,6 +83,14 @@ void hal_gnss_reset_detection(void);
 /// Initialise SPI bus 2 (sensor bus) and all chip selects.
 void hal_sensor_spi_init(void);
 
+/// Release SPI bus 2 (sensor bus).
+/// Must be called before another peripheral (e.g. SD card) can use SPI2_HOST.
+void hal_sensor_spi_deinit(void);
+
+/// Re-initialise SPI bus 2 (sensor bus) after a temporary release.
+/// Used to restore the sensor bus after an SD card operation.
+void hal_sensor_spi_reinit(void);
+
 // --- IMU (BNO085) ---
 
 /// Initialise IMU on SPI.

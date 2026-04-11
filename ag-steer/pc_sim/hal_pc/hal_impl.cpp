@@ -148,6 +148,14 @@ void hal_sensor_spi_init(void) {
     hal_log("PC HAL: sensor SPI initialised (simulated)");
 }
 
+void hal_sensor_spi_deinit(void) {
+    // No-op on PC
+}
+
+void hal_sensor_spi_reinit(void) {
+    hal_log("PC HAL: sensor SPI re-initialised (simulated)");
+}
+
 void hal_imu_begin(void) {
     hal_log("PC HAL: IMU begun (simulated)");
 }

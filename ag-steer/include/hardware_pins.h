@@ -92,3 +92,33 @@
 // TODO: Verify this matches your wiring. GPIO 4 is a common choice.
 // ---------------------------------------------------------------------------
 #define SAFETY_IN       4
+
+// ---------------------------------------------------------------------------
+// SPI Bus 3: SD Card (OTA Firmware Update)
+//
+// The SD card shares SPI2_HOST (FSPI) with the sensor bus.
+// During normal operation the sensor bus owns SPI2_HOST.
+// When a firmware update is triggered the sensor bus is temporarily
+// released, SPI2_HOST is re-initialised with the SD-card pins, and
+// after the update (or on error) the sensor bus is restored.
+//
+// IMPORTANT – GPIO 5 / 6 / 7 on LilyGO T-ETH-Lite-S3:
+//   These GPIOs are exposed on the header and are NOT connected to any
+//   onboard peripheral.  However, if your specific board revision routes
+//   them elsewhere (e.g. USB, PSRAM, strapping), adjust the pins here.
+//   The LilyGO T-ETH-Lite-S3 schematic shows them as free GPIOs.
+//
+// Pin mapping (user-specified):
+//   MISO = GPIO5   MOSI = GPIO6   SCLK = GPIO7   CS = GPIO42
+// ---------------------------------------------------------------------------
+#define SD_SPI_MISO    5
+#define SD_SPI_MOSI    6
+#define SD_SPI_SCK     7
+#define SD_CS          42
+
+// Firmware file name on SD card
+#define SD_FW_FILE_PRIMARY   "/firmware.bin"
+#define SD_FW_FILE_ALT       "/update.bin"
+
+// Version file on SD card (optional – contains e.g. "1.2.3")
+#define SD_FW_VERSION_FILE   "/firmware.version"

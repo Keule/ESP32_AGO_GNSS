@@ -235,6 +235,16 @@ void hal_sensor_spi_init(void) {
             SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI);
 }
 
+void hal_sensor_spi_deinit(void) {
+    sensorSPI.end();
+    hal_log("ESP32: sensor SPI released (SPI2_HOST now free)");
+}
+
+void hal_sensor_spi_reinit(void) {
+    sensorSPI.begin(SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI, -1);
+    hal_log("ESP32: sensor SPI re-initialised on FSPI/SPI2_HOST");
+}
+
 void hal_imu_begin(void) {
     pinMode(CS_IMU, OUTPUT);
     digitalWrite(CS_IMU, HIGH);
