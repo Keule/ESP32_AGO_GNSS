@@ -7,10 +7,11 @@
  *
  * SPI bus strategy:
  *   The SD card shares SPI2_HOST (FSPI) with the sensor bus.
- *   During the update the sensor SPI bus is released via
+ *   All devices use the same pins (SCK=7, MISO=5, MOSI=6).
+ *   During the update the sensor SPI is released via
  *   hal_sensor_spi_deinit(), then SPI2_HOST is re-initialised
- *   with the SD-card pins.  After the update (or on any error)
- *   the sensor SPI bus is restored via hal_sensor_spi_reinit().
+ *   for SD card access. After the update (or on any error)
+ *   the sensor SPI is restored via hal_sensor_spi_reinit().
  *
  * This file includes Arduino / ESP32 headers and is only compiled
  * for the ESP32 target (NOT for PC simulation).
@@ -132,7 +133,7 @@ bool isFirmwareUpdateAvailableOnSD(void) {
 
     // 3. Create a dedicated SPI instance for the SD card on FSPI (= SPI2_HOST)
     SPIClass sdSPI(FSPI);
-    sdSPI.begin(SD_SPI_SCK, SD_SPI_MISO, SD_SPI_MOSI, SD_CS);
+    sdSPI.begin(SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI, SD_CS);
 
     // 4. Mount SD card
     if (!SD.begin(SD_CS, sdSPI, 4000000, "/sd", 5)) {
@@ -251,7 +252,7 @@ bool updateFirmwareFromSD(void) {
     hal_delay_ms(10);
 
     SPIClass sdSPI(FSPI);
-    sdSPI.begin(SD_SPI_SCK, SD_SPI_MISO, SD_SPI_MOSI, SD_CS);
+    sdSPI.begin(SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI, SD_CS);
 
     if (!SD.begin(SD_CS, sdSPI, 4000000, "/sd", 5)) {
         hal_log("OTA: FATAL – SD card init FAILED");

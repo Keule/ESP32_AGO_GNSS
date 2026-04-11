@@ -158,3 +158,42 @@ Stage Summary:
   - YELLOW: GNSS Heading no data (optional subsystem)
 - Late GNSS detection: GPS module auto-recovers with green "GPS Module: Now Active" message
 - Dynamic safety monitoring in periodic update loop
+
+---
+Task ID: 4
+Agent: Main Agent
+Task: Fix SPI pin assignment – GPIOs 35-37 not available on T-ETH-Lite-S3
+
+Work Log:
+- User reported GPIOs 35, 36, 37 are used for sensor SPI but cannot be found on T-ETH-Lite-S3 header
+- Confirmed: ESP32-S3R8 with 8MB Octal PSRAM uses GPIOs 26-37 internally for PSRAM interface (SPIIO0-SPIIO7)
+- GPIOs 35-37 are NOT available as general-purpose GPIOs and not on the header
+- User also correctly identified GPIOs 9-14 are occupied by W5500 Ethernet (SPI3_HOST)
+- User proposed: put sensors on the same SPI bus as SD card (SPI2_HOST / FSPI)
+- Updated include/hardware_pins.h:
+  - Changed SENS_SPI_SCK from 35→7, SENS_SPI_MISO from 36→5, SENS_SPI_MOSI from 37→6
+  - Removed separate SD_SPI_* defines (same bus, same pins now)
+  - Changed IMU_INT from 41→43 (GPIO 41 is output-only on ESP32-S3R8, IMU INT needs input)
+  - Added detailed comments about GPIO constraints on ESP32-S3R8
+- Updated sd_logger_esp32.cpp:
+  - Removed separate SD_SPI_* pin references, now uses SENS_SPI_* (same pins)
+  - Replaced complex bus-switching logic with simpler sdBusClaim()/sdBusRelease()
+  - Still calls hal_sensor_spi_deinit()/reinit() to release/claim FSPI peripheral
+  - Added hal_spi_busy() flag for sensor code to check
+- Updated hal_impl.cpp:
+  - Updated comments to reflect shared bus architecture
+- Updated sd_ota_esp32.cpp:
+  - Changed SD_SPI_SCK/MISO/MOSI references to SENS_SPI_SCK/MISO/MOSI
+- Updated hal_impl.h: Added hal_spi_busy() declaration
+- Updated hardware_pins.h (project root copy) to match include/hardware_pins.h
+- Verified: No remaining references to old GPIO 35/36/37 or SD_SPI_* in src/
+
+Stage Summary:
+- CRITICAL BUG FIXED: Sensor SPI was configured on non-existent GPIOs 35-37 (occupied by PSRAM)
+- All SPI devices now share SPI2_HOST (FSPI) on pins 5/6/7 with different CS pins
+- Pin allocation:
+  - SPI3_HOST (W5500 ETH): SCK=10, MISO=11, MOSI=12, CS=9, INT=13, RST=14
+  - SPI2_HOST (shared):    SCK=7,  MISO=5,  MOSI=6
+  - CS pins: IMU=38, WAS=39, ACT=40, SD=42
+  - Other: IMU_INT=43, SAFETY=4, LOG_SWITCH=47
+- ADS1118 wiring for user: SCK→GPIO7, MISO→GPIO5, MOSI→GPIO6, CS→GPIO39

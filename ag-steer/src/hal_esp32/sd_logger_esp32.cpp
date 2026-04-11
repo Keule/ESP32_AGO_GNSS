@@ -5,29 +5,27 @@
  * Platform-specific code for the logger:
  *   - GPIO 47 switch reading (with debounce)
  *   - FreeRTOS logger task (lowest priority)
- *   - SD card init/deinit with SPI2_HOST bus switching
+ *   - SD card init/deinit on shared SPI2_HOST bus
  *   - CSV file creation and writing
  *
  * SPI bus strategy:
- *   The SD card uses SPI2_HOST (FSPI) with pins 5/6/7/42.
- *   The sensor bus also uses SPI2_HOST but with pins 35/36/37.
- *   They cannot be active simultaneously on the same SPI host.
+ *   SD card, ADS1118, IMU, and actuator all share SPI2_HOST (FSPI)
+ *   on pins 5/6/7. Each device has its own CS pin (42 for SD, 39 for
+ *   ADS1118, 38 for IMU, 40 for actuator).
  *
- *   During a flush cycle:
- *     1. Sensor SPI is released (hal_sensor_spi_deinit)
- *     2. SD card is initialised with SD-card pins
- *     3. Buffered records are written to the CSV file
- *     4. SD card is released
- *     5. Sensor SPI is restored (hal_sensor_spi_reinit)
+ *   Since all devices are on the SAME physical bus with the SAME pins,
+ *   the SD library and sensor code both use beginTransaction()/endTransaction()
+ *   for exclusive access.  However, the Arduino SPIClass does NOT provide
+ *   built-in mutex protection between tasks.
+ *
+ *   To prevent concurrent access between the control loop (which reads
+ *   sensors) and the logger task (which writes to SD), we use a simple
+ *   s_spi_busy flag:
+ *     - Logger sets flag before SD access, clears after
+ *     - Control loop should check hal_spi_busy() and skip sensor reads
+ *       when the flag is set (use last known values)
  *
  *   The sensor SPI is unavailable for ~50-200 ms per flush cycle.
- *   The control loop must tolerate this (use last known values).
- *   A flag (s_spi_busy) is provided so the control loop could check
- *   it, but typically the brief gap is acceptable for a 5-second
- *   flush interval.
- *
- * This file includes Arduino / ESP32 headers and is only compiled
- * for the ESP32 target.
  */
 
 #include "hal/hal.h"
@@ -54,7 +52,6 @@ static const uint32_t LOGGER_INTERVAL_MS = 2000;
 static const uint32_t SWITCH_DEBOUNCE_MS = 200;
 
 /// Maximum CSV line length (one record formatted as CSV).
-/// Each field is at most ~15 chars, 10 fields + commas + newline.
 static const size_t CSV_LINE_MAX = 160;
 
 // ===================================================================
@@ -73,8 +70,8 @@ static fs::File s_log_file;
 /// Current log file number (auto-incremented for each new session)
 static uint32_t s_file_counter = 0;
 
-/// SPI busy flag – set to true while SD card is using SPI2_HOST.
-/// The control loop could check this to skip sensor reads.
+/// SPI busy flag – set to true while SD card is accessing SPI2_HOST.
+/// Sensor reads should be skipped when this is true.
 static volatile bool s_spi_busy = false;
 
 /// Statistics
@@ -98,6 +95,14 @@ extern "C" bool sdLoggerReadSwitch(void) {
 }
 
 // ===================================================================
+// SPI bus coordination
+// ===================================================================
+
+bool hal_spi_busy(void) {
+    return s_spi_busy;
+}
+
+// ===================================================================
 // CSV formatting
 // ===================================================================
 
@@ -113,7 +118,6 @@ extern "C" bool sdLoggerReadSwitch(void) {
  * @return      Number of characters written (excluding null terminator).
  */
 static size_t formatCsvLine(const SdLogRecord& rec, char* buf) {
-    // Use 7 decimal places for lat/lon (~1 cm precision)
     int n = snprintf(buf, CSV_LINE_MAX,
         "%lu,%.7f,%.7f,%u,%.2f,%.2f,%.2f,%.2f,%.2f,%u",
         (unsigned long)rec.timestamp_ms,
@@ -175,11 +179,6 @@ static bool openLogFile(void) {
 /**
  * Flush the ring buffer to the SD card.
  *
- * This is the critical section where SPI2_HOST is borrowed from the
- * sensor bus. The total time depends on the number of buffered records
- * and SD card write speed. Typically ~50-150 ms for a full 2-second
- * buffer at 10 Hz log rate.
- *
  * @return Number of records written to SD.
  */
 static uint32_t flushBufferToSD(void) {
@@ -187,7 +186,7 @@ static uint32_t flushBufferToSD(void) {
 
     char csv_buf[CSV_LINE_MAX];
     uint32_t count = 0;
-    const uint32_t batch_limit = 512;  // max records per flush
+    const uint32_t batch_limit = 512;
 
     while (sdLoggerHasRecords() && count < batch_limit) {
         SdLogRecord rec;
@@ -202,10 +201,37 @@ static uint32_t flushBufferToSD(void) {
     }
 
     if (count > 0) {
-        s_log_file.flush();  // ensure data is written to SD
+        s_log_file.flush();
     }
 
     return count;
+}
+
+// ===================================================================
+// SD card init / deinit on shared SPI bus
+// ===================================================================
+
+/**
+ * Claim the SPI bus for SD card access.
+ *
+ * All devices share SPI2_HOST (FSPI) on the same pins (5/6/7).
+ * We must release the sensor SPIClass before the SD library can
+ * claim the FSPI peripheral, even though the physical pins are
+ * identical – two SPIClass instances cannot own the same peripheral
+ * simultaneously.
+ */
+static void sdBusClaim(void) {
+    s_spi_busy = true;
+    hal_sensor_spi_deinit();   // release FSPI peripheral
+    hal_delay_ms(2);
+}
+
+/**
+ * Release the SPI bus back to sensor code.
+ */
+static void sdBusRelease(void) {
+    hal_sensor_spi_reinit();   // reclaim FSPI peripheral for sensors
+    s_spi_busy = false;
 }
 
 // ===================================================================
@@ -215,32 +241,22 @@ static uint32_t flushBufferToSD(void) {
 /**
  * Main function for the logger FreeRTOS task.
  *
- * Runs at the LOWEST priority (priority 1) on Core 0.
+ * Runs at LOWEST priority on Core 0.
  * Wakes every LOGGER_INTERVAL_MS to:
  *   1. Check the hardware switch
  *   2. If switch is ON: flush ring buffer to SD
  *   3. If switch is OFF: close log file, release SD
  *
- * When the switch transitions from OFF → ON:
- *   - Release sensor SPI bus
- *   - Initialise SD card with SD pins
- *   - Open a new log file
- *   - Restore sensor SPI bus (file handle kept open)
- * Wait – actually we need to keep the SD card accessible between
- * flushes. But that means SPI2_HOST is mapped to SD pins, not
- * sensor pins.
+ * For each flush cycle:
+ *   1. Claim SPI bus (set s_spi_busy flag)
+ *   2. Init SD card on shared SPI2_HOST
+ *   3. Open/append log file, write records
+ *   4. Close file, release SD
+ *   5. Release SPI bus (clear s_spi_busy flag)
  *
- * REVISED APPROACH: For each flush cycle:
- *   1. Release sensor SPI
- *   2. Init SD
- *   3. Write records
- *   4. Close file
- *   5. Release SD
- *   6. Restore sensor SPI
- *
- * This means we open/close the file on each flush. The overhead is
- * minimal (~100 ms total) and guarantees the sensor SPI is available
- * between flushes.
+ * We open/close the file on each flush to minimise bus hold time.
+ * The overhead is minimal (~100 ms total) and guarantees the sensor
+ * SPI is available between flushes.
  */
 static void loggerTaskFunc(void* param) {
     (void)param;
@@ -262,19 +278,16 @@ static void loggerTaskFunc(void* param) {
         }
         bool switch_debounced = switch_raw;
 
-        // State machine: switch ON → start logging, switch OFF → stop
+        // State machine: switch ON -> start logging, switch OFF -> stop
         if (switch_debounced && !was_active) {
-            // --- TRANSITION: OFF → ON ---
+            // --- TRANSITION: OFF -> ON ---
             hal_log("LOGGER: switch ON – starting logging session");
 
-            // Release sensor SPI → take over SPI2_HOST for SD
-            s_spi_busy = true;
-            hal_sensor_spi_deinit();
-            hal_delay_ms(10);
+            sdBusClaim();
 
-            // Init SD card
+            // Init SD card on shared SPI2_HOST
             SPIClass sdSPI(FSPI);
-            sdSPI.begin(SD_SPI_SCK, SD_SPI_MISO, SD_SPI_MOSI, SD_CS);
+            sdSPI.begin(SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI, SD_CS);
 
             if (SD.begin(SD_CS, sdSPI, 4000000, "/sd", 5)) {
                 hal_log("LOGGER: SD card mounted OK");
@@ -285,20 +298,17 @@ static void loggerTaskFunc(void* param) {
                 s_last_overflow = 0;
             } else {
                 hal_log("LOGGER: ERROR – SD card init failed");
-                sdSPI.end();
                 s_logging_active = false;
             }
 
-            // Restore sensor SPI
             SD.end();
             sdSPI.end();
-            hal_sensor_spi_reinit();
-            s_spi_busy = false;
 
+            sdBusRelease();
             was_active = true;
 
         } else if (!switch_debounced && was_active) {
-            // --- TRANSITION: ON → OFF ---
+            // --- TRANSITION: ON -> OFF ---
             hal_log("LOGGER: switch OFF – stopping logging session");
             hal_log("LOGGER: session stats: %lu records flushed, %lu buffer overflows",
                     (unsigned long)s_session_flush_total,
@@ -311,14 +321,11 @@ static void loggerTaskFunc(void* param) {
             // --- ACTIVE: flush ring buffer to SD ---
             if (!sdLoggerHasRecords()) continue;
 
-            // Release sensor SPI → take over SPI2_HOST for SD
-            s_spi_busy = true;
-            hal_sensor_spi_deinit();
-            hal_delay_ms(5);
+            sdBusClaim();
 
-            // Re-init SD (we close it after each flush, so need to re-open)
+            // Re-init SD (we close it after each flush)
             SPIClass sdSPI(FSPI);
-            sdSPI.begin(SD_SPI_SCK, SD_SPI_MISO, SD_SPI_MOSI, SD_CS);
+            sdSPI.begin(SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI, SD_CS);
 
             if (SD.begin(SD_CS, sdSPI, 4000000, "/sd", 5)) {
                 // Re-open the log file in append mode
@@ -346,14 +353,12 @@ static void loggerTaskFunc(void* param) {
                 hal_log("LOGGER: ERROR – SD card re-init failed during flush");
             }
 
-            // Restore sensor SPI
             SD.end();
             sdSPI.end();
-            hal_sensor_spi_reinit();
-            s_spi_busy = false;
 
+            sdBusRelease();
         }
-        // else: switch OFF and was_active=false → nothing to do (idle)
+        // else: switch OFF and was_active=false -> nothing to do (idle)
     }
 }
 
@@ -366,17 +371,15 @@ void sdLoggerInit(void) {
     pinMode(LOG_SWITCH_PIN, INPUT_PULLUP);
     hal_log("LOGGER: switch on GPIO %d (active LOW)", LOG_SWITCH_PIN);
 
-    // Read initial state
     s_logging_active = false;
 
     // Create the logger task on Core 0 with LOWEST priority.
-    // Stack size: 4096 bytes (needs headroom for SD + SPI operations)
     xTaskCreatePinnedToCore(
         loggerTaskFunc,
         "logger",
         4096,
         nullptr,
-        1,              // LOWEST priority (configMAX_PRIORITIES - 1 = highest)
+        1,              // LOWEST priority
         &s_logger_task_handle,
         0               // Core 0
     );

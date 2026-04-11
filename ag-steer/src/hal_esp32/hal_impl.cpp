@@ -82,11 +82,15 @@ static volatile bool s_gnss_main_has_data = false;
 static volatile bool s_gnss_heading_has_data = false;
 
 // ===================================================================
-// Sensor SPI bus 2 (FSPI / SPI2_HOST)
+// Shared SPI bus – FSPI / SPI2_HOST
 //
 // CRITICAL: Must use FSPI, NOT HSPI!
 // On ESP32-S3 (Arduino Core 2.x):  HSPI = SPI3_HOST (occupied by W5500!)
-//                                  FSPI = SPI2_HOST (free for sensors)
+//                                  FSPI = SPI2_HOST (free for sensors + SD)
+//
+// All SPI devices share this bus: SD card, ADS1118, IMU, actuator.
+// Pins: SCK=7, MISO=5, MOSI=6 (same for all devices).
+// Each device has its own CS pin (42, 39, 38, 40).
 // ===================================================================
 static SPIClass sensorSPI(FSPI);
 
@@ -231,18 +235,18 @@ void hal_gnss_reset_detection(void) {
 // ===================================================================
 void hal_sensor_spi_init(void) {
     sensorSPI.begin(SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI, -1);
-    hal_log("ESP32: sensor SPI initialised on FSPI/SPI2_HOST (SCK=%d MISO=%d MOSI=%d)",
+    hal_log("ESP32: shared SPI initialised on FSPI/SPI2_HOST (SCK=%d MISO=%d MOSI=%d)",
             SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI);
 }
 
 void hal_sensor_spi_deinit(void) {
     sensorSPI.end();
-    hal_log("ESP32: sensor SPI released (SPI2_HOST now free)");
+    hal_log("ESP32: shared SPI released (FSPI peripheral free)");
 }
 
 void hal_sensor_spi_reinit(void) {
     sensorSPI.begin(SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI, -1);
-    hal_log("ESP32: sensor SPI re-initialised on FSPI/SPI2_HOST");
+    hal_log("ESP32: shared SPI re-initialised on FSPI/SPI2_HOST");
 }
 
 void hal_imu_begin(void) {

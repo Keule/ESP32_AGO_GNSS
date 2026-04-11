@@ -2,7 +2,7 @@
  * @file hardware_pins.h
  * @brief Central pin definitions for LilyGO T-ETH-Lite-S3 (ESP32-S3 + W5500)
  *
- * Target: ESP32-S3-WROOM-1 with W5500 Ethernet over SPI.
+ * Target: ESP32-S3-WROOM-1-N8R8 (16 MB Flash, 8 MB Octal PSRAM) + W5500 Ethernet.
  *
  * Pin mapping verified against official LilyGO repository:
  *   https://github.com/Xinyuan-LilyGO/LilyGO-T-ETH-Series
@@ -12,22 +12,35 @@
  * SPI BUS ALLOCATION  (CRITICAL – wrong bus = crash!)
  * ========================================================================
  *   SPI3_HOST = W5500 Ethernet  (onboard, GPIO  9/10/11/12/13/14)
- *   SPI2_HOST = Sensor bus      (external, GPIO 35/36/37/38/39/40/41)
+ *   SPI2_HOST = Shared bus      (GPIO  5/6/7/38/39/40/42/43)
+ *              → SD card (OTA + logging)
+ *              → ADS1118 ADC (steer angle)
+ *              → BNO085 IMU
+ *              → Actuator driver
  *
  * On ESP32-S3 in Arduino Core 2.x:
  *   FSPI = SPI2_HOST   HSPI = SPI3_HOST
  *
- * The sensor bus MUST use FSPI (= SPI2_HOST), NOT HSPI (= SPI3_HOST)!
+ * The shared bus MUST use FSPI (= SPI2_HOST), NOT HSPI (= SPI3_HOST)!
  * HSPI is the same physical bus as SPI3_HOST which the W5500 ETH driver
  * uses. Sharing the bus between ETH driver and SPIClass causes a hard
  * crash: "assert failed: spi_hal_setup_trans ... spi_ll_get_running_cmd"
+ *
+ * GPIO NOTE – ESP32-S3R8 (with Octal PSRAM):
+ *   GPIOs 26-37 are INTERNALLY occupied by the Octal PSRAM interface.
+ *   They are NOT available as general-purpose GPIOs and are not connected
+ *   to the header pins on the T-ETH-Lite-S3 board.
+ *   GPIOs 38-42 are OUTPUT-ONLY (no input capability).
+ *   GPIOs 43-48 are full bidirectional GPIOs.
  * ========================================================================
  *
- * GPIO assignment – grouped for physical adjacency on the header:
+ * GPIO assignment – by header row:
  *
- *   Header row 1 (onboard):  9 10 11 12 13 14 = W5500 (fixed)
- *   Header row 2 (GNSS):    15 16 17 18 = UART2 RX/TX, UART1 RX/TX
- *   Header row 3 (sensors): 35 36 37 38 39 40 41 = SPI2 + CS + INT + Safety
+ *   Row 1 (onboard ETH):  9  10  11  12  13  14  = W5500 (fixed)
+ *   Row 2 (GNSS UART):   15  16  17  18           = UART2, UART1
+ *   Row 3 (SPI + CS):     5   6   7              = SPI2 bus (MISO/MOSI/SCK)
+ *   Row 4 (CS + misc):   38  39  40  42           = CS pins (output-only OK)
+ *   Misc:                 4  43  47               = Safety, IMU_INT, LogSwitch
  */
 
 #pragma once
@@ -61,62 +74,40 @@
 #define GNSS_BAUD_RATE   460800
 
 // ---------------------------------------------------------------------------
-// SPI Bus 2: Sensors / Actuator (FSPI = SPI2_HOST)
+// SPI Bus 2: Shared Sensor + SD Card Bus (FSPI = SPI2_HOST)
 //
-// MUST use FSPI on ESP32-S3 (Arduino Core 2.x) because HSPI = SPI3_HOST
-// which is occupied by the W5500 ETH driver.
+// All SPI devices (SD card, ADS1118, IMU, actuator) share this bus.
+// Each device has its own CS pin.  The Arduino SD library and our sensor
+// code both use beginTransaction()/endTransaction() for exclusive access.
 //
-// GPIOs 35-41 are available on the header and physically adjacent:
-//   35 36 37 38 39 40 41
+// GPIOs 5/6/7 are bidirectional general-purpose GPIOs, verified free on
+// the T-ETH-Lite-S3 (not connected to any onboard peripheral).
 //
-// Pin assignment (physically grouped):
-//   SPI bus:   35=SCK  36=MISO  37=MOSI
-//   Chip Sel:  38=IMU_CS  39=WAS_CS  40=ACT_CS
-//   INT/Safe:  41=IMU_INT
-//   Safety:    4  (standalone, pull-up input)
+// During normal operation the sensor code owns the bus.
+// For SD card access (OTA at boot, or logging), the logger temporarily
+// releases the sensor SPI so the SD library can use the same bus.
 // ---------------------------------------------------------------------------
-#define SENS_SPI_SCK   35
-#define SENS_SPI_MISO  36
-#define SENS_SPI_MOSI  37
+#define SENS_SPI_SCK   7      // SPI clock
+#define SENS_SPI_MISO  5      // SPI MISO (data from devices to ESP32)
+#define SENS_SPI_MOSI  6      // SPI MOSI (data from ESP32 to devices)
 
-// Chip Selects (SPI Bus 2 devices) – active LOW
-#define CS_IMU          38
-#define CS_STEER_ANG   39
-#define CS_ACT         40
+// Chip Selects (active LOW) – GPIOs 38-42 are output-only, which is fine.
+#define CS_IMU          38    // BNO085 IMU
+#define CS_STEER_ANG   39    // ADS1118 ADC (steer angle potentiometer)
+#define CS_ACT         40    // Actuator driver
 
-// IMU interrupt (BNO085 INT pin)
-#define IMU_INT        41
+// SD Card – same bus, different CS
+#define SD_CS          42    // SD card slot
+
+// IMU interrupt (BNO085 INT pin) – needs bidirectional GPIO for input!
+#define IMU_INT        43    // GPIO 43 is bidirectional on ESP32-S3
 
 // ---------------------------------------------------------------------------
 // Safety input (active LOW)
-// TODO: Verify this matches your wiring. GPIO 4 is a common choice.
 // ---------------------------------------------------------------------------
 #define SAFETY_IN       4
 
-// ---------------------------------------------------------------------------
-// SPI Bus 3: SD Card (OTA Firmware Update)
-//
-// The SD card shares SPI2_HOST (FSPI) with the sensor bus.
-// During normal operation the sensor bus owns SPI2_HOST.
-// When a firmware update is triggered the sensor bus is temporarily
-// released, SPI2_HOST is re-initialised with the SD-card pins, and
-// after the update (or on error) the sensor bus is restored.
-//
-// IMPORTANT – GPIO 5 / 6 / 7 on LilyGO T-ETH-Lite-S3:
-//   These GPIOs are exposed on the header and are NOT connected to any
-//   onboard peripheral.  However, if your specific board revision routes
-//   them elsewhere (e.g. USB, PSRAM, strapping), adjust the pins here.
-//   The LilyGO T-ETH-Lite-S3 schematic shows them as free GPIOs.
-//
-// Pin mapping (user-specified):
-//   MISO = GPIO5   MOSI = GPIO6   SCLK = GPIO7   CS = GPIO42
-// ---------------------------------------------------------------------------
-#define SD_SPI_MISO    5
-#define SD_SPI_MOSI    6
-#define SD_SPI_SCK     7
-#define SD_CS          42
-
-// Firmware file name on SD card
+// Firmware file name on SD card (for OTA)
 #define SD_FW_FILE_PRIMARY   "/firmware.bin"
 #define SD_FW_FILE_ALT       "/update.bin"
 
@@ -126,13 +117,9 @@
 // ---------------------------------------------------------------------------
 // Logging switch (active LOW, internal pull-up)
 //
-// GPIO 47 is a free GPIO on the LilyGO T-ETH-Lite-S3 header.
+// GPIO 47 is a free bidirectional GPIO on the T-ETH-Lite-S3 header.
 // Connect a toggle switch between GPIO 47 and GND.
-//   Switch OFF (open)  → pin pulled HIGH → logging disabled
-//   Switch ON (closed) → pin pulled LOW  → logging enabled
-//
-// The logger checks this pin before each SD card flush.
-// When the switch is turned OFF during active logging, the current
-// log file is closed and the SD card is released immediately.
+//   Switch OFF (open)  -> pin pulled HIGH -> logging disabled
+//   Switch ON (closed) -> pin pulled LOW  -> logging enabled
 // ---------------------------------------------------------------------------
 #define LOG_SWITCH_PIN   47
