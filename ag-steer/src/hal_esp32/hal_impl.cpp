@@ -378,30 +378,32 @@ void hal_steer_angle_begin(void) {
     digitalWrite(CS_STEER_ANG, HIGH);
     hal_delay_ms(1);
 
-    // First transaction: send config, read garbage (no previous conversion)
-    // This starts the first real conversion.
-    ads1118Transaction();
-
     hal_log("ESP32: ADS1118 on CS=%d (AIN0, +/4.096V, 128 SPS, SPI Mode 0)",
             CS_STEER_ANG);
 }
 
 bool hal_steer_angle_detect(void) {
-    // The first conversion was started in hal_steer_angle_begin().
-    // Wait for it to complete (128 SPS = 7.8 ms).
-    uint32_t elapsed = millis() - s_ads_last_conv_start;
-    if (elapsed < ADS1118_CONV_MS) {
-        hal_delay_ms(ADS1118_CONV_MS - elapsed + 1);
-    }
+    // IMPORTANT: Do NOT rely on any previous conversion.
+    // The OTA check may have deinit/reinit'd the SPI bus, and the
+    // ADS1118's internal state may be unknown.  Do a full cycle:
+    //   1) Send config (result is garbage)
+    //   2) Wait for conversion (128 SPS = 7.8 ms)
+    //   3) Read actual result
 
-    // Read the first conversion result (and start a second one)
+    // Step 1: send config, start conversion (ignore garbage result)
+    ads1118Transaction();
+
+    // Step 2: wait for conversion to complete
+    hal_delay_ms(ADS1118_CONV_MS + 2);
+
+    // Step 3: read conversion result
     int16_t raw = ads1118Transaction();
 
     float voltage = static_cast<float>(raw) * ADS1118_LSB_V;
 
-    // 0xFFFF = conversion not ready (floating MISO or not connected)
+    // 0xFFFF = conversion not ready / floating MISO
     // 0x0000 = could be valid (0V) or shorted
-    // For a poti at 3.3V, expect 0..26880 (never negative for AIN0 vs GND)
+    // For AIN0 vs GND with 0-3.3V poti: expect 0..~26800
     bool detected = (raw != static_cast<int16_t>(0xFFFF) && raw != 0x0000);
 
     if (detected) {

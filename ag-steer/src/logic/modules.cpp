@@ -60,11 +60,14 @@ void modulesInit(void) {
     s_hw.eth_detected = hal_net_detected();
     hal_log("MODULES: Ethernet (W5500)    : %s", s_hw.eth_detected ? "OK" : "FAIL");
 
+    // Steer Angle Sensor (ADS1118) – detect BEFORE IMU!
+    // The ADS1118 holds DOUT LOW while converting, which would
+    // cause the IMU detect to read 0x00 (false negative).
+    // Detecting ADS1118 first ensures DOUT is HIGH after detection.
+    s_hw.was_detected = hal_steer_angle_detect();
+
     // IMU (BNO085)
     s_hw.imu_detected = hal_imu_detect();
-
-    // Steer Angle Sensor (WAS)
-    s_hw.was_detected = hal_steer_angle_detect();
 
     // Actuator
     s_hw.actuator_detected = hal_actuator_detect();
