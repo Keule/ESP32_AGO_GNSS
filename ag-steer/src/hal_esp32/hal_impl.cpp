@@ -35,7 +35,7 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <HardwareSerial.h>
-#include "ads1118.h"         // ADS1118 ADC library (lib/ads1118/)
+#include "ads1118_compat.h"  // ADS1118 adapter (local or denkitronik)
 
 // ===================================================================
 // ETH driver selection based on Arduino ESP32 Core version
@@ -292,14 +292,15 @@ bool hal_imu_detect(void) {
 // ===================================================================
 // ADS1118 – 16-Bit ADC for steering angle potentiometer
 // ===================================================================
-// Uses the local ADS1118 library (lib/ads1118/).
+// Uses ads1118_compat.h which selects at compile time:
 //
-// The library handles:
-//   - 16-bit simultaneous config+data SPI protocol
-//   - Auto-detection of SPI mode (Mode0 / Mode1)
-//   - Auto-detection of bit-inverted DOUT (cheap level-shifters)
-//   - DOUT connectivity test (crosstalk / floating detection)
-//   - Shared SPI bus support (deselect other devices)
+//   Default (no define):
+//     Local lib/ads1118/ with auto SPI-mode detection,
+//     bit-inversion compensation, DOUT test, shared-bus support.
+//
+//   #define USE_DENKITRONIK_ADS1118:
+//     denkitronik/ADS1118 library (4-byte protocol, SPI_MODE1 only).
+//     No bit-inversion support – may not work with cheap modules.
 //
 // Config: AIN0 vs GND, ±4.096V, single-shot, 128 SPS.
 // ADC result: 16-bit signed, 1 LSB = 0.125 mV.
@@ -314,11 +315,8 @@ static void adsDeselectOthers(void) {
     digitalWrite(CS_ACT, HIGH);
 }
 
-/// Other CS pins to deselect (passed to library as backup)
-static const int s_ads_deselect_pins[] = { SD_CS, CS_IMU, CS_ACT };
-
-/// ADS1118 library instance (uses shared FSPI sensorSPI bus)
-static ADS1118 s_ads1118(sensorSPI);
+/// ADS1118 device adapter (local or denkitronik, chosen at compile time)
+static ADS1118Dev s_ads_dev;
 
 /// 1 LSB in volts (±4.096V over 32768 steps)
 static const float ADS1118_LSB_V = 0.000125f;  // 4.096 / 32768 = 125 µV
@@ -329,30 +327,26 @@ void hal_steer_angle_begin(void) {
     pinMode(CS_IMU, OUTPUT); digitalWrite(CS_IMU, HIGH);
     pinMode(CS_ACT, OUTPUT); digitalWrite(CS_ACT, HIGH);
 
-    // Initialise the ADS1118 on CS=39 with shared bus support.
-    // The library stores the deselect callback and calls it before
-    // every transaction to prevent bus contention.
-    s_ads1118.begin(CS_STEER_ANG, s_ads_deselect_pins, 3, adsDeselectOthers);
+    // Initialise via the compat adapter.
+    // The adapter forwards to the appropriate library implementation.
+    s_ads_dev.begin(sensorSPI, CS_STEER_ANG, adsDeselectOthers);
 
-    hal_log("ESP32: ADS1118 on CS=%d (AIN0, +/-4.096V, 128 SPS) [library]",
-            CS_STEER_ANG);
+    hal_log("ESP32: ADS1118 on CS=%d (AIN0, +/-4.096V, 128 SPS)"
+#ifdef USE_DENKITRONIK_ADS1118
+            " [denkitronik]"
+#else
+            " [local]"
+#endif
+            , CS_STEER_ANG);
 }
 
 bool hal_steer_angle_detect(void) {
-    // The library handles full detection internally:
-    // DOUT connectivity test, SPI mode probing (Mode0/Mode1),
-    // and bit-inversion detection.
-    // We route its log output through hal_log.
-
-    // Lambda wrapper to route library output through hal_log.
-    // Uses a static function to avoid lambda issues with C-style variadic args.
-    bool detected = s_ads1118.detect();
+    bool detected = s_ads_dev.detect();
 
     if (detected) {
-        hal_log("ESP32: ADS1118 DETECTED (%s%s, PGA=%.3fV)",
-                (s_ads1118.getSPIMode() == SPI_MODE0) ? "Mode0" : "Mode1",
-                s_ads1118.isDoutInverted() ? ", invert-DOUT" : "",
-                s_ads1118.getFSR());
+        hal_log("ESP32: ADS1118 DETECTED (PGA=%.3fV%s)",
+                s_ads_dev.getFSR(),
+                s_ads_dev.isDoutInverted() ? ", invert-DOUT" : "");
     } else {
         hal_log("ESP32: ADS1118 DETECT FAILED");
     }
@@ -361,13 +355,13 @@ bool hal_steer_angle_detect(void) {
 }
 
 float hal_steer_angle_read_deg(void) {
-    if (!s_ads1118.isDetected()) {
+    if (!s_ads_dev.isDetected()) {
         return 0.0f;  // Not detected – return neutral
     }
 
     // Non-blocking read: starts new conversion if previous is complete.
     // Returns last known value if conversion still in progress.
-    int16_t raw = s_ads1118.readLoop(0);  // AIN0
+    int16_t raw = s_ads_dev.readLoop(0);  // AIN0
 
     // Convert to voltage
     float voltage = static_cast<float>(raw) * ADS1118_LSB_V;

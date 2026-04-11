@@ -240,3 +240,44 @@ Stage Summary:
 - Bit-inversion NOT YET VERIFIED by user (last test showed raw=-16449 before inversion fix was added)
 - Library is reusable: can be used for other ADS1118 channels, differential reads, temperature
 - Remaining issues: verify bit-inversion fix works, GNSS→PGN conversion, dual-receiver heading, subnet-change bug
+
+---
+Task ID: 6
+Agent: Main Agent
+Task: Add denkitronik/ADS1118 library compatibility with compile-time switch
+
+Work Log:
+- Analyzed denkitronik/ADS1118 library (https://github.com/denkitronik/ADS1118):
+  - Uses 4-byte SPI protocol (2 reads per CS cycle: garbage + real data)
+  - Hardcoded SPI_MODE1 (no auto-detection)
+  - No bit-inversion support (critical: our cheap module inverts DOUT!)
+  - Constructor: ADS1118(cs_pin, &spi) for ESP32
+  - API: getADCValue(inputs), getMilliVolts(), getTemperature(), getADCValueNoWait(drdy)
+  - Constants: AIN_0-AIN_3, DIFF_0_1 etc, FSR_4096, RATE_128SPS, SINGLE_SHOT
+  - Config union with bit-field struct representation
+- Created include/ads1118_compat.h – adapter header with two backends:
+  - #ifdef USE_DENKITRONIK_ADS1118 → wraps denkitronik ADS1118 class
+  - Default (no define) → wraps local lib/ads1118/ ADS1118 class
+  - Unified ADS1118Dev interface: begin(spi, cs, deselect_fn), detect(), readLoop(ch), getFSR(), isDoutInverted()
+  - Uses heap-allocated backend (new) to avoid placement-new / reference issues
+- Updated platformio.ini:
+  - Added -Ilib/ads1118 include path for local library header resolution
+  - Added commented-out -DUSE_DENKITRONIK_ADS1118 flag
+  - Added commented-out denkitronik/ADS1118 in lib_deps
+  - Clear documentation comments on how to switch
+- Updated src/hal_esp32/hal_impl.cpp:
+  - Changed include from "ads1118.h" to "ads1118_compat.h"
+  - Changed static instance from ADS1118 s_ads1118(sensorSPI) to ADS1118Dev s_ads_dev
+  - Updated begin() to use s_ads_dev.begin(sensorSPI, cs, deselect_fn)
+  - Updated detect() to use s_ads_dev.detect()
+  - Updated readLoop to use s_ads_dev.readLoop(0)
+  - Added #ifdef in log message to show [local] or [denkitronik]
+
+Stage Summary:
+- Compile-time switch implemented: local library (default) or denkitronik library
+- Default (local): auto SPI-mode detect, bit-inversion, DOUT test, shared-bus support
+- denkitronik: standard library, no bit-inversion (will fail with our cheap module!)
+- Switch in platformio.ini: uncomment -DUSE_DENKITRONIK_ADS1118 + lib_deps entry
+- NOTE: denkitronik uses SPI_MODE1 (our module works with Mode0) AND 4-byte protocol
+  (our module uses correct 2-byte protocol) AND no bit-inversion.
+  The local library is strongly recommended for this hardware setup.
