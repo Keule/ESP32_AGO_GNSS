@@ -1,0 +1,14 @@
+{
+    "name": "ADS1118",
+    "version": "1.0.0",
+    "description": "ADS1118 16-bit ADC driver with auto SPI-mode detection and bit-inversion compensation",
+    "keywords": "ads1118, adc, spi",
+    "authors": [
+        {
+            "name": "AgSteer Project"
+        }
+    ],
+    "dependencies": [],
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

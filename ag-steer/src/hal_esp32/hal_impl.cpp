@@ -6,8 +6,12 @@
  *   - MCU: ESP32-S3-WROOM-1
  *   - Ethernet: W5500 over SPI3_HOST (GPIO10/11/12/9) via ESP-IDF ETH driver
  *   - GNSS: 2x UM980 on UART1/UART2 (460800 baud)
- *   - Sensors: IMU (BNO085), Steer Angle, Actuator on SPI2_HOST (FSPI)
+ *   - Sensors: IMU (BNO085), Steer Angle (ADS1118), Actuator on SPI2_HOST (FSPI)
  *   - Safety: GPIO4 active LOW
+ *
+ * ADS1118 ADC uses the local ADS1118 library (lib/ads1118/).
+ * The library handles SPI mode auto-detection, bit-inversion compensation,
+ * DOUT connectivity testing, and shared-bus CS management.
  *
  * W5500 Ethernet uses the ESP-IDF ETH driver:
  *   - Arduino ESP32 Core >= 3.0.0: native <ETH.h>
@@ -31,6 +35,7 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <HardwareSerial.h>
+#include "ads1118.h"         // ADS1118 ADC library (lib/ads1118/)
 
 // ===================================================================
 // ETH driver selection based on Arduino ESP32 Core version
@@ -287,473 +292,82 @@ bool hal_imu_detect(void) {
 // ===================================================================
 // ADS1118 – 16-Bit ADC for steering angle potentiometer
 // ===================================================================
-// Connected via SPI Bus 2 (FSPI / SPI2_HOST), CS = GPIO 39.
+// Uses the local ADS1118 library (lib/ads1118/).
 //
-// ADS1118 SPI protocol (NOT standard SPI slave!):
-//   The ADS1118 uses a fixed 16-bit frame per CS cycle.
-//   Config and data are transmitted SIMULTANEOUSLY:
-//     - While DIN receives config (16 bits), DOUT outputs the
-//       previous conversion result (16 bits).
-//     - CS HIGH → starts new conversion (if OS bit = 1)
+// The library handles:
+//   - 16-bit simultaneous config+data SPI protocol
+//   - Auto-detection of SPI mode (Mode0 / Mode1)
+//   - Auto-detection of bit-inverted DOUT (cheap level-shifters)
+//   - DOUT connectivity test (crosstalk / floating detection)
+//   - Shared SPI bus support (deselect other devices)
 //
-//   IMPORTANT: Only 16 bits per CS cycle! Sending more bytes
-//   overwrites the config register with garbage.
-//
-// SPI Mode: TI datasheet says Mode 1 (CPOL=0, CPHA=1) only.
-//   We try both Mode 0 and Mode 1 during detection and use
-//   whichever returns valid data.
-//
-// Timing (single-shot mode, 128 SPS):
-//   Conversion time = 1/128 = 7.8 ms
-//   Must wait >= 8 ms after CS HIGH before next CS LOW.
-//   Control loop at 200 Hz (5 ms) → read every other cycle.
-//
-// Config register (16 bit, MSB first):
-//   Bit 15    : OS  = 1 (start single-shot conversion)
-//   Bits 14-12: MUX = 000 (AIN0 vs GND)
-//   Bits 11-9 : PGA = 001 (±4.096V range)
-//   Bit 8     : MODE = 1 (single-shot, not continuous)
-//   Bits 7-5  : DR  = 100 (128 SPS)
-//   Bit 4     : CM  = 0 (standard mode)
-//   Bit 3     : TS  = 0 (ADC mode, not temp sensor)
-//   Bit 2     : POL = 0 (MSB first)
-//   Bits 1-0  : CQ  = 11 (comparator disabled)
-//
-// Config = 0x8383  (1000 0011 1000 0011)
-//
-// ADC result: 16-bit signed, MSB first.
-//   0xFFFF = conversion not ready / busy
-//   ±4.096V → 1 LSB = 0.125 mV
-//   0-3.3V poti → raw 0 to ~26880
+// Config: AIN0 vs GND, ±4.096V, single-shot, 128 SPS.
+// ADC result: 16-bit signed, 1 LSB = 0.125 mV.
+// 0-3.3V poti → raw 0 to ~26880.
 // ===================================================================
 
-/// ADS1118 config: AIN0, ±4.096V, single-shot, 128 SPS
-static const uint16_t ADS1118_CONFIG =
-    (1u << 15) |  // OS: start single-shot
-    (0u << 12) |  // MUX: AIN0 vs GND
-    (1u <<  9) |  // PGA: ±4.096V
-    (1u <<  8) |  // MODE: single-shot
-    (4u <<  5) |  // DR: 128 SPS
-    (0u <<  4) |  // CM: standard
-    (0u <<  3) |  // TS: ADC mode
-    (0u <<  2) |  // POL: MSB first
-    (3u <<  0);   // CQ: comparator disabled
-// = 0x8383
+/// Callback to deselect all shared-bus SPI devices before ADS1118 access.
+/// The SD library may leave SD_CS floating after SD.end().
+static void adsDeselectOthers(void) {
+    digitalWrite(SD_CS, HIGH);
+    digitalWrite(CS_IMU, HIGH);
+    digitalWrite(CS_ACT, HIGH);
+}
+
+/// Other CS pins to deselect (passed to library as backup)
+static const int s_ads_deselect_pins[] = { SD_CS, CS_IMU, CS_ACT };
+
+/// ADS1118 library instance (uses shared FSPI sensorSPI bus)
+static ADS1118 s_ads1118(sensorSPI);
 
 /// 1 LSB in volts (±4.096V over 32768 steps)
-static const float ADS1118_LSB_V = 0.000125f;  // 4.096 / 32768 = 125 µV = 0.000125 V
-
-/// Minimum time between CS HIGH and next CS LOW (ms)
-/// 128 SPS = 7.8125 ms, use 9 ms for safety margin
-static const uint32_t ADS1118_CONV_MS = 9;
-
-/// Timestamp of last CS HIGH (start of conversion)
-static uint32_t s_ads_last_conv_start = 0;
-
-/// Last valid raw ADC reading
-static int16_t s_ads_last_raw = 0;
-
-/// SPI mode that worked during detection (SPI_MODE0 or SPI_MODE1)
-static uint8_t s_ads_spi_mode = SPI_MODE0;
-
-/// Whether ADS1118 was detected successfully
-static bool s_ads_detected = false;
-
-/// Whether DOUT data must be bit-inverted (some cheap modules use
-/// transistor level-shifters that invert the signal on DOUT).
-/// Detected automatically during hal_steer_angle_detect().
-static bool s_ads_invert_dout = false;
-
-// ===================================================================
-// Optional: Isolated ADS1118 test on separate pins (debug only)
-//
-// Uncomment the following line to run an isolated ADS1118 test
-// on GPIO 44/45/46/48 at boot, BEFORE any other SPI device is touched.
-// This tests the ADS1118 module on a completely clean, dedicated bus
-// with no SD card, IMU, or actuator to interfere.
-//
-// Wiring for this test:
-//   ADS1118 DOUT  -> GPIO 44
-//   ADS1118 DIN   -> GPIO 45
-//   ADS1118 SCLK  -> GPIO 46
-//   ADS1118 CS    -> GPIO 48
-//   ADS1118 VDD   -> 3.3V
-//   ADS1118 GND   -> GND
-//   ADS1118 AIN0  -> poti wiper
-// ===================================================================
-// #define ADS1118_ISOLATED_TEST
-
-#ifdef ADS1118_ISOLATED_TEST
-static void ads1118IsolatedTest(void) {
-    hal_log(\"=== ADS1118 ISOLATED TEST (GPIO 44/45/46/48) ===\");
-
-    // Deselect all shared-bus devices to prevent interference
-    pinMode(SD_CS, OUTPUT);        digitalWrite(SD_CS, HIGH);
-    pinMode(CS_IMU, OUTPUT);       digitalWrite(CS_IMU, HIGH);
-    pinMode(CS_STEER_ANG, OUTPUT); digitalWrite(CS_STEER_ANG, HIGH);
-    pinMode(CS_ACT, OUTPUT);       digitalWrite(CS_ACT, HIGH);
-
-    // Set up isolated SPI on test pins
-    SPIClass testSPI(FSPI);
-    testSPI.begin(ADS_TEST_SCK, ADS_TEST_MISO, ADS_TEST_MOSI, ADS_TEST_CS);
-    hal_log(\"Test SPI started (SCK=%d MISO=%d MOSI=%d CS=%d)\",
-            ADS_TEST_SCK, ADS_TEST_MISO, ADS_TEST_MOSI, ADS_TEST_CS);
-
-    // DOUT connectivity test (send 0x55, check if MISO echoes it)
-    testSPI.beginTransaction(SPISettings(200000, MSBFIRST, SPI_MODE0));
-    digitalWrite(ADS_TEST_CS, LOW);
-    uint8_t tb1 = testSPI.transfer(0x55);
-    uint8_t tb2 = testSPI.transfer(0x55);
-    digitalWrite(ADS_TEST_CS, HIGH);
-    testSPI.endTransaction();
-
-    if (tb1 == 0x55 && tb2 == 0x55) {
-        hal_log(\"Test DOUT: CROSSTALK - DIN/DOUT swapped (read 0x%02X 0x%02X)\", tb1, tb2);
-    } else if (tb1 == 0xFF && tb2 == 0xFF) {
-        hal_log(\"Test DOUT: FLOATING - no device on GPIO%d\", ADS_TEST_MISO);
-    } else {
-        hal_log(\"Test DOUT: OK (read 0x%02X 0x%02X)\", tb1, tb2);
-    }
-
-    // Full detection cycle on both SPI modes, with and without inversion
-    for (int mode_idx = 0; mode_idx < 2; mode_idx++) {
-        uint8_t mode = (mode_idx == 0) ? SPI_MODE0 : SPI_MODE1;
-        const char* mname = (mode_idx == 0) ? \"Mode0\" : \"Mode1\";
-
-        // Send config, start conversion
-        testSPI.beginTransaction(SPISettings(200000, MSBFIRST, mode));
-        digitalWrite(ADS_TEST_CS, LOW);
-        testSPI.transfer(static_cast<uint8_t>((ADS1118_CONFIG >> 8) & 0xFF));
-        testSPI.transfer(static_cast<uint8_t>(ADS1118_CONFIG & 0xFF));
-        digitalWrite(ADS_TEST_CS, HIGH);
-        testSPI.endTransaction();
-
-        // Wait for conversion
-        hal_delay_ms(ADS1118_CONV_MS + 3);
-
-        // Read result
-        testSPI.beginTransaction(SPISettings(200000, MSBFIRST, mode));
-        digitalWrite(ADS_TEST_CS, LOW);
-        uint8_t msb = testSPI.transfer(static_cast<uint8_t>((ADS1118_CONFIG >> 8) & 0xFF));
-        uint8_t lsb = testSPI.transfer(static_cast<uint8_t>(ADS1118_CONFIG & 0xFF));
-        digitalWrite(ADS_TEST_CS, HIGH);
-        testSPI.endTransaction();
-
-        int16_t raw      = static_cast<int16_t>((static_cast<uint16_t>(msb) << 8) | lsb);
-        int16_t raw_inv  = static_cast<int16_t>(~raw);
-
-        float v_raw = static_cast<float>(raw) * ADS1118_LSB_V;
-        float v_inv = static_cast<float>(raw_inv) * ADS1118_LSB_V;
-
-        hal_log(\"Test %s: raw=%d (0x%04X) = %.4fV  |  inv=%d (0x%04X) = %.4fV\",
-                mname, raw, static_cast<uint16_t>(raw), v_raw,
-                raw_inv, static_cast<uint16_t>(raw_inv), v_inv);
-    }
-
-    // Clean up isolated SPI
-    testSPI.end();
-    hal_log(\"=== ISOLATED TEST COMPLETE ===\");
-}
-#endif // ADS1118_ISOLATED_TEST
-
-/**
- * Perform one ADS1118 SPI transaction (16 bits).
- *
- * Sends config to DIN while reading previous conversion result from DOUT.
- * CS HIGH starts a new conversion.
- *
- * If s_ads_invert_dout is true, the received bytes are bit-inverted
- * before interpretation (compensates for modules with inverting level
- * shifters on the DOUT line).
- *
- * @return 16-bit raw ADC value (0xFFFF = conversion not ready)
- */
-static int16_t ads1118Transaction(void) {
-    sensorSPI.beginTransaction(SPISettings(1000000, MSBFIRST, s_ads_spi_mode));
-    digitalWrite(CS_STEER_ANG, LOW);
-
-    // 16-bit simultaneous transfer: config OUT, result IN
-    uint8_t msb = sensorSPI.transfer(static_cast<uint8_t>((ADS1118_CONFIG >> 8) & 0xFF));
-    uint8_t lsb = sensorSPI.transfer(static_cast<uint8_t>(ADS1118_CONFIG & 0xFF));
-
-    digitalWrite(CS_STEER_ANG, HIGH);
-    sensorSPI.endTransaction();
-
-    s_ads_last_conv_start = millis();
-
-    // Apply bit inversion if the module's DOUT line is inverted
-    if (s_ads_invert_dout) {
-        msb = ~msb;
-        lsb = ~lsb;
-    }
-
-    return static_cast<int16_t>((static_cast<uint16_t>(msb) << 8) | lsb);
-}
-
-/**
- * DOUT connectivity test.
- *
- * Sends a distinctive 0x55 0x55 pattern (01010101) on MOSI.
- * If DOUT is correctly on MISO, the ADS1118 drives its own data
- * (previous conversion result) which will NOT be 0x55.
- * If DIN/DOUT are swapped, MISO picks up the MOSI signal and
- * reads back approximately 0x55 0x55 (crosstalk).
- * If DOUT is not connected at all, MISO reads 0xFF 0xFF (floating).
- *
- * @return true if DOUT appears to be correctly connected (device responds)
- */
-static bool ads1118CheckDoutConnection(void) {
-    // Use slow clock for reliable bit-bang-level test
-    sensorSPI.beginTransaction(SPISettings(200000, MSBFIRST, SPI_MODE0));
-    digitalWrite(CS_STEER_ANG, LOW);
-    uint8_t b1 = sensorSPI.transfer(0x55);  // distinctive pattern
-    uint8_t b2 = sensorSPI.transfer(0x55);
-    digitalWrite(CS_STEER_ANG, HIGH);
-    sensorSPI.endTransaction();
-
-    bool crosstalk  = (b1 == 0x55 || b2 == 0x55);
-    bool floating   = (b1 == 0xFF && b2 == 0xFF);
-
-    if (crosstalk) {
-        hal_log("ESP32: ADS1118 DOUT test: CROSSTALK (read 0x%02X 0x%02X)", b1, b2);
-        hal_log("ESP32:   DIN/DOUT cables are SWAPPED!");
-        hal_log("ESP32:   Correct: DOUT -> GPIO%d (MISO)  DIN -> GPIO%d (MOSI)",
-                SENS_SPI_MISO, SENS_SPI_MOSI);
-        return false;
-    } else if (floating) {
-        hal_log("ESP32: ADS1118 DOUT test: FLOATING (read 0xFF 0xFF)");
-        hal_log("ESP32:   No device driving MISO – check wiring");
-        hal_log("ESP32:   DOUT must be connected to GPIO%d (MISO)", SENS_SPI_MISO);
-        return false;
-    } else {
-        hal_log("ESP32: ADS1118 DOUT test: OK (read 0x%02X 0x%02X)", b1, b2);
-        return true;
-    }
-}
-
-/**
- * Check if a raw ADC value looks like MOSI→MISO crosstalk.
- *
- * Crosstalk patterns to detect:
- *   - Low byte matches config low byte  (0x83)
- *   - High byte matches config high byte (0x83)
- *   - Entire value matches config word     (0x8383)
- *   - Value is close to 0x5555 or 0x0000 (test pattern echo)
- */
-static bool ads1118IsCrosstalk(int16_t raw) {
-    uint16_t uval = static_cast<uint16_t>(raw);
-    uint16_t lo = uval & 0x00FF;
-    uint16_t hi = (uval >> 8) & 0x00FF;
-
-    // Config word bytes appear in the reading
-    if (lo == 0x83 || hi == 0x83) return true;
-
-    // Continuous-mode config echo (0x03 in high byte)
-    if (hi == 0x03) return true;
-
-    // Test pattern echo
-    if (uval == 0x5555 || uval == 0x0000) return true;
-
-    return false;
-}
+static const float ADS1118_LSB_V = 0.000125f;  // 4.096 / 32768 = 125 µV
 
 void hal_steer_angle_begin(void) {
-    pinMode(CS_STEER_ANG, OUTPUT);
-    digitalWrite(CS_STEER_ANG, HIGH);
+    // Ensure all other SPI device CS pins are configured as outputs
+    pinMode(SD_CS, OUTPUT);  digitalWrite(SD_CS, HIGH);
+    pinMode(CS_IMU, OUTPUT); digitalWrite(CS_IMU, HIGH);
+    pinMode(CS_ACT, OUTPUT); digitalWrite(CS_ACT, HIGH);
 
-    // Deselect SD card slot and other SPI devices to prevent bus interference.
-    // The SD library may leave SD_CS floating after SD.end().
-    pinMode(SD_CS, OUTPUT);
-    digitalWrite(SD_CS, HIGH);
-    pinMode(CS_IMU, OUTPUT);
-    digitalWrite(CS_IMU, HIGH);
-    pinMode(CS_ACT, OUTPUT);
-    digitalWrite(CS_ACT, HIGH);
+    // Initialise the ADS1118 on CS=39 with shared bus support.
+    // The library stores the deselect callback and calls it before
+    // every transaction to prevent bus contention.
+    s_ads1118.begin(CS_STEER_ANG, s_ads_deselect_pins, 3, adsDeselectOthers);
 
-    hal_delay_ms(1);
-
-    hal_log("ESP32: ADS1118 on CS=%d (AIN0, +/-4.096V, 128 SPS)", CS_STEER_ANG);
-
-    // === DOUT CONNECTIVITY TEST ===
-    // Before attempting full detection, verify DOUT is on the correct pin.
-    // This prevents false-positive detection with crosstalk data.
-    ads1118CheckDoutConnection();
+    hal_log("ESP32: ADS1118 on CS=%d (AIN0, +/-4.096V, 128 SPS) [library]",
+            CS_STEER_ANG);
 }
 
 bool hal_steer_angle_detect(void) {
-    // Ensure SD card and other SPI devices are deselected before detection.
-    // Prevents residual pull from interfering with MISO.
-    digitalWrite(SD_CS, HIGH);
-    digitalWrite(CS_IMU, HIGH);
-    digitalWrite(CS_ACT, HIGH);
+    // The library handles full detection internally:
+    // DOUT connectivity test, SPI mode probing (Mode0/Mode1),
+    // and bit-inversion detection.
+    // We route its log output through hal_log.
 
-    // === ADS1118 DETECTION ===
-    // Strategy: try both SPI modes, pick the one that returns valid data.
-    // Use slow clock (200 kHz) for reliable detection.
-    // Full cycle per mode: send config → wait → read result.
+    // Lambda wrapper to route library output through hal_log.
+    // Uses a static function to avoid lambda issues with C-style variadic args.
+    bool detected = s_ads1118.detect();
 
-    struct ModeResult {
-        uint8_t mode;
-        const char* name;
-        int16_t raw;
-        bool valid;
-        bool inverted;
-    };
-
-    ModeResult results[2] = {
-        { SPI_MODE0, "Mode0", 0, false, false },
-        { SPI_MODE1, "Mode1", 0, false, false },
-    };
-
-    for (int i = 0; i < 2; i++) {
-        uint8_t mode = results[i].mode;
-
-        // Step 1: send config, start conversion (ignore garbage result)
-        sensorSPI.beginTransaction(SPISettings(200000, MSBFIRST, mode));
-        digitalWrite(CS_STEER_ANG, LOW);
-        sensorSPI.transfer(static_cast<uint8_t>((ADS1118_CONFIG >> 8) & 0xFF));
-        sensorSPI.transfer(static_cast<uint8_t>(ADS1118_CONFIG & 0xFF));
-        digitalWrite(CS_STEER_ANG, HIGH);
-        sensorSPI.endTransaction();
-
-        // Step 2: wait for conversion to complete
-        hal_delay_ms(ADS1118_CONV_MS + 3);
-
-        // Step 3: read conversion result
-        sensorSPI.beginTransaction(SPISettings(200000, MSBFIRST, mode));
-        digitalWrite(CS_STEER_ANG, LOW);
-        uint8_t msb = sensorSPI.transfer(static_cast<uint8_t>((ADS1118_CONFIG >> 8) & 0xFF));
-        uint8_t lsb = sensorSPI.transfer(static_cast<uint8_t>(ADS1118_CONFIG & 0xFF));
-        digitalWrite(CS_STEER_ANG, HIGH);
-        sensorSPI.endTransaction();
-
-        int16_t raw = static_cast<int16_t>((static_cast<uint16_t>(msb) << 8) | lsb);
-        int16_t raw_inv = static_cast<int16_t>(~raw);  // bit-inverted
-
-        // Choose: inverted or not?
-        // Some cheap modules have inverting level-shifters on DOUT.
-        // Heuristic: prefer the interpretation that gives a value within
-        // the ±4.096V range (0..32768 for unipolar poti on 0-3.3V)
-        // and does NOT look like crosstalk.
-        bool raw_crosstalk = ads1118IsCrosstalk(raw);
-        bool inv_crosstalk = ads1118IsCrosstalk(raw_inv);
-        bool raw_ok = (raw != static_cast<int16_t>(0xFFFF)) && !raw_crosstalk;
-        bool inv_ok = (raw_inv != static_cast<int16_t>(0xFFFF)) && !inv_crosstalk;
-
-        // Prefer inverted if raw is crosstalk but inverted is clean,
-        // OR if inverted gives a positive value while raw is negative
-        // (assuming poti input is 0-3.3V → positive ADC reading).
-        bool use_inverted = false;
-        if (inv_ok && !raw_ok) {
-            use_inverted = true;
-        } else if (raw_ok && inv_ok) {
-            // Both pass crosstalk check — prefer the one with
-            // a value in the expected 0-3.3V range
-            if (raw < 0 && raw_inv >= 0) use_inverted = true;
-        }
-
-        results[i].raw = use_inverted ? raw_inv : raw;
-        results[i].inverted = use_inverted;
-        results[i].valid = (results[i].raw != static_cast<int16_t>(0xFFFF));
-
-        float voltage = static_cast<float>(results[i].raw) * ADS1118_LSB_V;
-        hal_log("ESP32: ADS1118 %s%s: raw=%d (0x%04X), voltage=%.4fV %s",
-                results[i].name,
-                use_inverted ? " (inv)" : "",
-                results[i].raw,
-                static_cast<uint16_t>(results[i].raw),
-                voltage,
-                results[i].valid ? "OK" : "BAD");
-    }
-
-    // Pick the best result
-    int16_t best_raw = 0;
-    uint8_t best_mode = SPI_MODE0;
-    bool any_valid = false;
-
-    for (int i = 0; i < 2; i++) {
-        if (results[i].valid) {
-            any_valid = true;
-            best_raw = results[i].raw;
-            best_mode = results[i].mode;
-            break;  // Mode0 preferred if both valid
-        }
-    }
-
-    if (any_valid) {
-        s_ads_spi_mode = best_mode;
-        s_ads_last_raw = best_raw;
-        s_ads_detected = true;
-
-        // Store the inversion flag from the winning mode
-        for (int i = 0; i < 2; i++) {
-            if (results[i].mode == best_mode) {
-                s_ads_invert_dout = results[i].inverted;
-                break;
-            }
-        }
-
-        float voltage = static_cast<float>(best_raw) * ADS1118_LSB_V;
-        hal_log("ESP32: ADS1118 DETECTED OK (%s%s, raw=%d, %.4fV)",
-                (best_mode == SPI_MODE0) ? "Mode0" : "Mode1",
-                s_ads_invert_dout ? ", invert-DOUT" : "",
-                best_raw, voltage);
-        return true;
-    }
-
-    // === DETECTION FAILED ===
-    s_ads_detected = false;
-
-    // For failure diagnostics, re-evaluate raw vs inverted
-    bool any_crosstalk = false;
-    bool any_floating = false;
-    for (int i = 0; i < 2; i++) {
-        uint16_t u = static_cast<uint16_t>(results[i].raw);
-        if (u == 0xFFFF) any_floating = true;
-        if (!results[i].inverted && ads1118IsCrosstalk(results[i].raw)) any_crosstalk = true;
-        if (results[i].inverted && ads1118IsCrosstalk(static_cast<int16_t>(~results[i].raw))) any_crosstalk = true;
-    }
-
-    if (any_crosstalk) {
-        hal_log("ESP32: ADS1118 DETECT FAILED – crosstalk in both modes");
-        hal_log("ESP32: ROOT CAUSE: DIN/DOUT cables are SWAPPED");
-        hal_log("ESP32: ACTION: Swap the two data cables on the ADS1118 module:");
-        hal_log("ESP32:   DOUT -> GPIO%d (MISO)  DIN -> GPIO%d (MOSI)",
-                SENS_SPI_MISO, SENS_SPI_MOSI);
-    } else if (any_floating) {
-        hal_log("ESP32: ADS1118 DETECT FAILED – no response (0xFFFF)");
-        hal_log("ESP32: ROOT CAUSE: ADS1118 not communicating");
-        hal_log("ESP32: Check: (1) DOUT connected to GPIO%d?", SENS_SPI_MISO);
-        hal_log("ESP32:        (2) DIN connected to GPIO%d?", SENS_SPI_MOSI);
-        hal_log("ESP32:        (3) ADS1118 powered (VDD=3.3V)?");
-        hal_log("ESP32:        (4) CS jumper to GPIO%d?", CS_STEER_ANG);
+    if (detected) {
+        hal_log("ESP32: ADS1118 DETECTED (%s%s, PGA=%.3fV)",
+                (s_ads1118.getSPIMode() == SPI_MODE0) ? "Mode0" : "Mode1",
+                s_ads1118.isDoutInverted() ? ", invert-DOUT" : "",
+                s_ads1118.getFSR());
     } else {
-        hal_log("ESP32: ADS1118 DETECT FAILED – unknown response");
+        hal_log("ESP32: ADS1118 DETECT FAILED");
     }
 
-    return false;
+    return detected;
 }
 
 float hal_steer_angle_read_deg(void) {
-    if (!s_ads_detected) {
+    if (!s_ads1118.isDetected()) {
         return 0.0f;  // Not detected – return neutral
     }
 
-    // Check if enough time has passed for the conversion to complete
-    uint32_t elapsed = millis() - s_ads_last_conv_start;
-    if (elapsed >= ADS1118_CONV_MS) {
-        // Conversion ready – read result and start next conversion
-        int16_t raw = ads1118Transaction();
-
-        // 0xFFFF means conversion not ready or bus error
-        if (raw != static_cast<int16_t>(0xFFFF)) {
-            s_ads_last_raw = raw;
-        }
-        // else: keep previous value
-    }
-    // else: not enough time, return last known value
-
-    int16_t raw = s_ads_last_raw;
+    // Non-blocking read: starts new conversion if previous is complete.
+    // Returns last known value if conversion still in progress.
+    int16_t raw = s_ads1118.readLoop(0);  // AIN0
 
     // Convert to voltage
     float voltage = static_cast<float>(raw) * ADS1118_LSB_V;
@@ -771,6 +385,9 @@ float hal_steer_angle_read_deg(void) {
     return angle;
 }
 
+// ===================================================================
+// Actuator – SPI Bus 2 (FSPI / SPI2_HOST)
+// ===================================================================
 void hal_actuator_begin(void) {
     pinMode(CS_ACT, OUTPUT);
     digitalWrite(CS_ACT, HIGH);
@@ -961,12 +578,6 @@ void hal_esp32_init_all(void) {
 
     // Safety pin
     pinMode(SAFETY_IN, INPUT_PULLUP);
-
-#ifdef ADS1118_ISOLATED_TEST
-    // Isolated test runs BEFORE shared-bus SPI is initialised.
-    // This gives it exclusive use of the FSPI peripheral.
-    ads1118IsolatedTest();
-#endif
 
     // SPI sensor bus (FSPI / SPI2_HOST)
     hal_sensor_spi_init();

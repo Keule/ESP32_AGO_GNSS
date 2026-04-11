@@ -197,3 +197,46 @@ Stage Summary:
   - CS pins: IMU=38, WAS=39, ACT=40, SD=42
   - Other: IMU_INT=43, SAFETY=4, LOG_SWITCH=47
 - ADS1118 wiring for user: SCK→GPIO7, MISO→GPIO5, MOSI→GPIO6, CS→GPIO39
+
+---
+Task ID: 5
+Agent: Main Agent
+Task: Refactor ADS1118 driver into reusable library, fix bit-inversion and DOUT issues
+
+Work Log:
+- Debugged ADS1118 SPI communication issues over multiple iterations:
+  - DOUT/MISO initially read HIGH (floating) → DOUT not connected to GPIO5
+  - MOSI→MISO crosstalk detected → user swapped DIN/DOUT cables
+  - After swap: Mode0 returns raw=-16449 (0xBFBF) = -2.056V (but user measures +2.06V)
+  - DISCOVERY: Data is bit-inverted! ~0xBFBF = 0x4040 = 16448 → 2.056V matches perfectly
+  - Root cause: cheap ADS1118 modules use transistor level-shifters that invert DOUT
+  - Mode1 returns 0xFFFF (broken), Mode0 works → use Mode0
+- Created local ADS1118 library (lib/ads1118/):
+  - ads1118.h: Full class with enums (Mux, PGA, DataRate, Mode), configuration API, read API
+  - ads1118.cpp: Implementation with auto-detection, shared-bus support, bit-inversion
+  - library.json: PlatformIO metadata
+  - Features:
+    - 16-bit simultaneous config+data SPI protocol (per ADS1118 datasheet SLASB73)
+    - Auto SPI mode detection (tries Mode0 and Mode1, picks whichever works)
+    - Auto bit-inversion detection (heuristic: prefer positive values for 0-3.3V poti)
+    - DOUT connectivity test (0x55 pattern to detect crosstalk/floating)
+    - Crosstalk detection (checks for config echo patterns)
+    - Shared SPI bus support (deselect callback + pin list)
+    - Non-blocking readLoop() for 200 Hz control loop (128 SPS = 7.8ms conversion)
+    - Temperature sensor readout
+    - Differential and single-ended modes
+- Rewrote src/hal_esp32/hal_impl.cpp to use ADS1118 library:
+  - Removed ~490 lines of inline ADS1118 code (config constants, state vars, transaction functions, detection logic, crosstalk checks, isolated test)
+  - Replaced with ~60 lines using ADS1118 library class
+  - hal_steer_angle_begin(): initializes library with CS pin and deselect callback
+  - hal_steer_angle_detect(): calls s_ads1118.detect() which handles all auto-detection
+  - hal_steer_angle_read_deg(): uses s_ads1118.readLoop(0) for non-blocking reads
+  - Removed broken #ifdef ADS1118_ISOLATED_TEST block (had escaped-quote syntax errors)
+  - Removed hal_esp32_init_all reference to ads1118IsolatedTest()
+
+Stage Summary:
+- ADS1118 driver refactored from ~490 lines inline to ~60 lines using library
+- All debugging features preserved in library: SPI mode auto-detect, bit-inversion auto-detect, DOUT test, crosstalk detection
+- Bit-inversion NOT YET VERIFIED by user (last test showed raw=-16449 before inversion fix was added)
+- Library is reusable: can be used for other ADS1118 channels, differential reads, temperature
+- Remaining issues: verify bit-inversion fix works, GNSS→PGN conversion, dual-receiver heading, subnet-change bug
