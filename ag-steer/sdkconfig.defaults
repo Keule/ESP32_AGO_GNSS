@@ -1,13 +1,10 @@
 # sdkconfig.defaults for LilyGO T-ETH-Lite-S3
-# ESP32-S3-WROOM-1-N8R8: 16 MB Flash
+# ESP32-S3-WROOM-1: 16 MB Flash, PSRAM disabled
 #
 # These settings are merged into the sdkconfig at build time.
 # PlatformIO picks up this file automatically.
 
 # === PSRAM: DISABLED ===
-# We don't need PSRAM for AgSteer (firmware is small, no large buffers).
-# BOARD_HAS_PSRAM removed from board definition to prevent Arduino core
-# from calling psramInit() which fails on some T-ETH-Lite-S3 revisions.
 CONFIG_SPIRAM=n
 
 # === Flash & App Settings ===
@@ -15,10 +12,9 @@ CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 
-# === Core Dump to UART (for debugging crashes) ===
-# Prints stack trace to Serial on panic/crash instead of flash partition.
-CONFIG_ESP_COREDUMP_TO_UART=y
-CONFIG_ESP_COREDUMP_TO_UART_DEFAULT=y
+# === Core Dump to Flash (stack trace on crash) ===
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_TO_FLASH=y
 
 # === FreeRTOS ===
 CONFIG_FREERTOS_HZ=1000
