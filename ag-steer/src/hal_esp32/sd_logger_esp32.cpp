@@ -87,12 +87,12 @@ static uint32_t s_session_flush_total = 0;
 // ===================================================================
 
 /// Global declarations from sd_logger.cpp
-extern bool sdLoggerHasRecords(void);
-extern bool sdLoggerReadRecord(SdLogRecord* out);
-extern void sdLoggerIncrementFlushed(uint32_t count);
-extern uint32_t sdLoggerGetOverflowCount(void);
+extern "C" bool sdLoggerHasRecords(void);
+extern "C" bool sdLoggerReadRecord(SdLogRecord* out);
+extern "C" void sdLoggerIncrementFlushed(uint32_t count);
+extern "C" uint32_t sdLoggerGetOverflowCount(void);
 
-bool sdLoggerReadSwitch(void) {
+extern "C" bool sdLoggerReadSwitch(void) {
     // Active LOW: LOW = logging ON, HIGH = logging OFF
     return digitalRead(LOG_SWITCH_PIN) == LOW;
 }

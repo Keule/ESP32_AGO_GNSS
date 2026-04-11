@@ -147,13 +147,13 @@ uint32_t sdLoggerGetBufferCount(void) {
 // ===================================================================
 
 /// Check if there are records waiting in the ring buffer.
-bool sdLoggerHasRecords(void) {
+extern "C" bool sdLoggerHasRecords(void) {
     return s_write_idx != s_read_idx;
 }
 
 /// Read one record from the ring buffer (consumer side).
 /// Returns true if a record was read, false if buffer is empty.
-bool sdLoggerReadRecord(SdLogRecord* out) {
+extern "C" bool sdLoggerReadRecord(SdLogRecord* out) {
     uint32_t r = s_read_idx;
     if (r == s_write_idx) {
         return false;  // buffer empty
@@ -165,11 +165,11 @@ bool sdLoggerReadRecord(SdLogRecord* out) {
 }
 
 /// Increment the flushed counter (called by the consumer after writing to SD).
-void sdLoggerIncrementFlushed(uint32_t count) {
+extern "C" void sdLoggerIncrementFlushed(uint32_t count) {
     s_records_flushed += count;
 }
 
 /// Get the overflow counter (for diagnostics).
-uint32_t sdLoggerGetOverflowCount(void) {
+extern "C" uint32_t sdLoggerGetOverflowCount(void) {
     return s_overflow_count;
 }
