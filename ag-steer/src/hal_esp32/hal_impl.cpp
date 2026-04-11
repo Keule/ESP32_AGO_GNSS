@@ -299,6 +299,10 @@ bool hal_imu_detect(void) {
 //   IMPORTANT: Only 16 bits per CS cycle! Sending more bytes
 //   overwrites the config register with garbage.
 //
+// SPI Mode: TI datasheet says Mode 1 (CPOL=0, CPHA=1) only.
+//   We try both Mode 0 and Mode 1 during detection and use
+//   whichever returns valid data.
+//
 // Timing (single-shot mode, 128 SPS):
 //   Conversion time = 1/128 = 7.8 ms
 //   Must wait >= 8 ms after CS HIGH before next CS LOW.
@@ -336,19 +340,6 @@ static const uint16_t ADS1118_CONFIG =
     (3u <<  0);   // CQ: comparator disabled
 // = 0x8383
 
-/// ADS1118 config variant: continuous conversion (for comparison test)
-static const uint16_t ADS1118_CONFIG_CONT =
-    (0u << 15) |  // OS: no-op in continuous mode
-    (0u << 12) |  // MUX: AIN0 vs GND
-    (1u <<  9) |  // PGA: ±4.096V
-    (0u <<  8) |  // MODE: continuous (not single-shot!)
-    (4u <<  5) |  // DR: 128 SPS
-    (0u <<  4) |  // CM: standard
-    (0u <<  3) |  // TS: ADC mode
-    (0u <<  2) |  // POL: MSB first
-    (3u <<  0);   // CQ: comparator disabled
-// = 0x0383
-
 /// 1 LSB in volts (±4.096V over 32768 steps)
 static const float ADS1118_LSB_V = 0.000125f;  // 4.096 / 32768 = 125 µV = 0.000125 V
 
@@ -362,6 +353,12 @@ static uint32_t s_ads_last_conv_start = 0;
 /// Last valid raw ADC reading
 static int16_t s_ads_last_raw = 0;
 
+/// SPI mode that worked during detection (SPI_MODE0 or SPI_MODE1)
+static uint8_t s_ads_spi_mode = SPI_MODE0;
+
+/// Whether ADS1118 was detected successfully
+static bool s_ads_detected = false;
+
 /**
  * Perform one ADS1118 SPI transaction (16 bits).
  *
@@ -371,7 +368,7 @@ static int16_t s_ads_last_raw = 0;
  * @return 16-bit raw ADC value (0xFFFF = conversion not ready)
  */
 static int16_t ads1118Transaction(void) {
-    sensorSPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+    sensorSPI.beginTransaction(SPISettings(1000000, MSBFIRST, s_ads_spi_mode));
     digitalWrite(CS_STEER_ANG, LOW);
 
     // 16-bit simultaneous transfer: config OUT, result IN
@@ -386,90 +383,200 @@ static int16_t ads1118Transaction(void) {
     return static_cast<int16_t>((static_cast<uint16_t>(msb) << 8) | lsb);
 }
 
+/**
+ * DOUT connectivity test.
+ *
+ * Sends a distinctive 0x55 0x55 pattern (01010101) on MOSI.
+ * If DOUT is correctly on MISO, the ADS1118 drives its own data
+ * (previous conversion result) which will NOT be 0x55.
+ * If DIN/DOUT are swapped, MISO picks up the MOSI signal and
+ * reads back approximately 0x55 0x55 (crosstalk).
+ * If DOUT is not connected at all, MISO reads 0xFF 0xFF (floating).
+ *
+ * @return true if DOUT appears to be correctly connected (device responds)
+ */
+static bool ads1118CheckDoutConnection(void) {
+    // Use slow clock for reliable bit-bang-level test
+    sensorSPI.beginTransaction(SPISettings(200000, MSBFIRST, SPI_MODE0));
+    digitalWrite(CS_STEER_ANG, LOW);
+    uint8_t b1 = sensorSPI.transfer(0x55);  // distinctive pattern
+    uint8_t b2 = sensorSPI.transfer(0x55);
+    digitalWrite(CS_STEER_ANG, HIGH);
+    sensorSPI.endTransaction();
+
+    bool crosstalk  = (b1 == 0x55 || b2 == 0x55);
+    bool floating   = (b1 == 0xFF && b2 == 0xFF);
+
+    if (crosstalk) {
+        hal_log("ESP32: ADS1118 DOUT test: CROSSTALK (read 0x%02X 0x%02X)", b1, b2);
+        hal_log("ESP32:   DIN/DOUT cables are SWAPPED!");
+        hal_log("ESP32:   Correct: DOUT -> GPIO%d (MISO)  DIN -> GPIO%d (MOSI)",
+                SENS_SPI_MISO, SENS_SPI_MOSI);
+        return false;
+    } else if (floating) {
+        hal_log("ESP32: ADS1118 DOUT test: FLOATING (read 0xFF 0xFF)");
+        hal_log("ESP32:   No device driving MISO – check wiring");
+        hal_log("ESP32:   DOUT must be connected to GPIO%d (MISO)", SENS_SPI_MISO);
+        return false;
+    } else {
+        hal_log("ESP32: ADS1118 DOUT test: OK (read 0x%02X 0x%02X)", b1, b2);
+        return true;
+    }
+}
+
+/**
+ * Check if a raw ADC value looks like MOSI→MISO crosstalk.
+ *
+ * Crosstalk patterns to detect:
+ *   - Low byte matches config low byte  (0x83)
+ *   - High byte matches config high byte (0x83)
+ *   - Entire value matches config word     (0x8383)
+ *   - Value is close to 0x5555 or 0x0000 (test pattern echo)
+ */
+static bool ads1118IsCrosstalk(int16_t raw) {
+    uint16_t uval = static_cast<uint16_t>(raw);
+    uint16_t lo = uval & 0x00FF;
+    uint16_t hi = (uval >> 8) & 0x00FF;
+
+    // Config word bytes appear in the reading
+    if (lo == 0x83 || hi == 0x83) return true;
+
+    // Continuous-mode config echo (0x03 in high byte)
+    if (hi == 0x03) return true;
+
+    // Test pattern echo
+    if (uval == 0x5555 || uval == 0x0000) return true;
+
+    return false;
+}
+
 void hal_steer_angle_begin(void) {
     pinMode(CS_STEER_ANG, OUTPUT);
     digitalWrite(CS_STEER_ANG, HIGH);
     hal_delay_ms(1);
 
-    hal_log("ESP32: ADS1118 on CS=%d (AIN0, +/4.096V, 128 SPS)", CS_STEER_ANG);
+    hal_log("ESP32: ADS1118 on CS=%d (AIN0, +/-4.096V, 128 SPS)", CS_STEER_ANG);
 
-    // === GPIO DIAGNOSTIC ===
-    // Direct pin reads WITHOUT SPI to verify physical connections
-    // MISO pin should be HIGH (floating) or LOW (pulled by ADS1118 DOUT)
-    int miso_raw = digitalRead(SENS_SPI_MISO);
-    int mosi_raw = digitalRead(SENS_SPI_MOSI);
-    int sck_raw  = digitalRead(SENS_SPI_SCK);
-    int cs_raw   = digitalRead(CS_STEER_ANG);
-    hal_log("ESP32: GPIO diag (before SPI): MISO=%d MOSI=%d SCK=%d CS=%d",
-            miso_raw, mosi_raw, sck_raw, cs_raw);
-
-    // Test: drive MOSI LOW then HIGH, read MISO to check for crosstalk
-    pinMode(SENS_SPI_MOSI, OUTPUT);
-    digitalWrite(SENS_SPI_MOSI, LOW);
-    hal_delay_ms(1);
-    int miso_when_mosi_low = digitalRead(SENS_SPI_MISO);
-    digitalWrite(SENS_SPI_MOSI, HIGH);
-    hal_delay_ms(1);
-    int miso_when_mosi_high = digitalRead(SENS_SPI_MISO);
-    // Restore MOSI to SPI mode
-    pinMode(SENS_SPI_MOSI, INPUT);
-
-    hal_log("ESP32: Crosstalk test: MOSI=LOW -> MISO=%d, MOSI=HIGH -> MISO=%d",
-            miso_when_mosi_low, miso_when_mosi_high);
-
-    if (miso_when_mosi_low != miso_when_mosi_high) {
-        hal_log("ESP32: WARNING – crosstalk detected between MOSI and MISO!");
-        hal_log("ESP32:   This means MOSI/DIN and MISO/DOUT cables are SWAPPED.");
-        hal_log("ESP32:   Correct wiring: ADS1118 DOUT -> ESP32 MISO (GPIO%d)", SENS_SPI_MISO);
-        hal_log("ESP32:                  ADS1118 DIN  -> ESP32 MOSI (GPIO%d)", SENS_SPI_MOSI);
-    } else if (miso_raw == 1) {
-        hal_log("ESP32: MISO (GPIO%d) reads HIGH = floating / no device driving it", SENS_SPI_MISO);
-        hal_log("ESP32:   Check: Is DOUT connected to GPIO%d?", SENS_SPI_MISO);
-    }
-
-    // === END GPIO DIAGNOSTIC ===
+    // === DOUT CONNECTIVITY TEST ===
+    // Before attempting full detection, verify DOUT is on the correct pin.
+    // This prevents false-positive detection with crosstalk data.
+    ads1118CheckDoutConnection();
 }
 
 bool hal_steer_angle_detect(void) {
-    // Do NOT rely on any previous conversion.
-    // Full 3-step cycle: config → wait → read
+    // === ADS1118 DETECTION ===
+    // Strategy: try both SPI modes, pick the one that returns valid data.
+    // Use slow clock (200 kHz) for reliable detection.
+    // Full cycle per mode: send config → wait → read result.
 
-    // Step 1: send config, start conversion (ignore garbage result)
-    ads1118Transaction();
+    struct ModeResult {
+        uint8_t mode;
+        const char* name;
+        int16_t raw;
+        bool valid;
+        bool crosstalk;
+    };
 
-    // Step 2: wait for conversion to complete
-    hal_delay_ms(ADS1118_CONV_MS + 2);
+    ModeResult results[2] = {
+        { SPI_MODE0, "Mode0", 0, false, false },
+        { SPI_MODE1, "Mode1", 0, false, false },
+    };
 
-    // Step 3: read conversion result
-    int16_t raw = ads1118Transaction();
+    for (int i = 0; i < 2; i++) {
+        uint8_t mode = results[i].mode;
 
-    // Crosstalk check: if raw value is suspiciously close to our config
-    // (0x8383 or 0x0383), MOSI and MISO are likely swapped
-    uint16_t uval = static_cast<uint16_t>(raw);
-    if ((uval & 0x00FF) == 0x0083) {
-        hal_log("ESP32: ADS1118 WARNING – raw 0x%04X looks like crosstalk (config echo)",
-                uval);
-        hal_log("ESP32:   MOSI and MISO cables are likely SWAPPED!");
-        hal_log("ESP32:   Correct: DOUT->GPIO%d(MISO)  DIN->GPIO%d(MOSI)",
+        // Step 1: send config, start conversion (ignore garbage result)
+        sensorSPI.beginTransaction(SPISettings(200000, MSBFIRST, mode));
+        digitalWrite(CS_STEER_ANG, LOW);
+        sensorSPI.transfer(static_cast<uint8_t>((ADS1118_CONFIG >> 8) & 0xFF));
+        sensorSPI.transfer(static_cast<uint8_t>(ADS1118_CONFIG & 0xFF));
+        digitalWrite(CS_STEER_ANG, HIGH);
+        sensorSPI.endTransaction();
+
+        // Step 2: wait for conversion to complete
+        hal_delay_ms(ADS1118_CONV_MS + 3);
+
+        // Step 3: read conversion result
+        sensorSPI.beginTransaction(SPISettings(200000, MSBFIRST, mode));
+        digitalWrite(CS_STEER_ANG, LOW);
+        uint8_t msb = sensorSPI.transfer(static_cast<uint8_t>((ADS1118_CONFIG >> 8) & 0xFF));
+        uint8_t lsb = sensorSPI.transfer(static_cast<uint8_t>(ADS1118_CONFIG & 0xFF));
+        digitalWrite(CS_STEER_ANG, HIGH);
+        sensorSPI.endTransaction();
+
+        results[i].raw = static_cast<int16_t>((static_cast<uint16_t>(msb) << 8) | lsb);
+        results[i].crosstalk = ads1118IsCrosstalk(results[i].raw);
+        results[i].valid = (results[i].raw != static_cast<int16_t>(0xFFFF))
+                        && !results[i].crosstalk;
+
+        float voltage = static_cast<float>(results[i].raw) * ADS1118_LSB_V;
+        hal_log("ESP32: ADS1118 %s: raw=%d (0x%04X), voltage=%.4fV %s%s",
+                results[i].name,
+                results[i].raw,
+                static_cast<uint16_t>(results[i].raw),
+                voltage,
+                results[i].valid ? "OK" : "BAD",
+                results[i].crosstalk ? " [CROSSTALK]" : "");
+    }
+
+    // Pick the best result
+    int16_t best_raw = 0;
+    uint8_t best_mode = SPI_MODE0;
+    bool any_valid = false;
+
+    for (int i = 0; i < 2; i++) {
+        if (results[i].valid) {
+            any_valid = true;
+            best_raw = results[i].raw;
+            best_mode = results[i].mode;
+            break;  // Mode0 preferred if both valid
+        }
+    }
+
+    if (any_valid) {
+        s_ads_spi_mode = best_mode;
+        s_ads_last_raw = best_raw;
+        s_ads_detected = true;
+
+        float voltage = static_cast<float>(best_raw) * ADS1118_LSB_V;
+        hal_log("ESP32: ADS1118 DETECTED OK (%s, raw=%d, %.4fV)",
+                (best_mode == SPI_MODE0) ? "Mode0" : "Mode1",
+                best_raw, voltage);
+        return true;
+    }
+
+    // === DETECTION FAILED ===
+    s_ads_detected = false;
+
+    bool any_crosstalk = results[0].crosstalk || results[1].crosstalk;
+    bool any_floating = (results[0].raw == static_cast<int16_t>(0xFFFF))
+                     || (results[1].raw == static_cast<int16_t>(0xFFFF));
+
+    if (any_crosstalk) {
+        hal_log("ESP32: ADS1118 DETECT FAILED – crosstalk in both modes");
+        hal_log("ESP32: ROOT CAUSE: DIN/DOUT cables are SWAPPED");
+        hal_log("ESP32: ACTION: Swap the two data cables on the ADS1118 module:");
+        hal_log("ESP32:   DOUT -> GPIO%d (MISO)  DIN -> GPIO%d (MOSI)",
                 SENS_SPI_MISO, SENS_SPI_MOSI);
+    } else if (any_floating) {
+        hal_log("ESP32: ADS1118 DETECT FAILED – no response (0xFFFF)");
+        hal_log("ESP32: ROOT CAUSE: ADS1118 not communicating");
+        hal_log("ESP32: Check: (1) DOUT connected to GPIO%d?", SENS_SPI_MISO);
+        hal_log("ESP32:        (2) DIN connected to GPIO%d?", SENS_SPI_MOSI);
+        hal_log("ESP32:        (3) ADS1118 powered (VDD=3.3V)?");
+        hal_log("ESP32:        (4) CS jumper to GPIO%d?", CS_STEER_ANG);
+    } else {
+        hal_log("ESP32: ADS1118 DETECT FAILED – unknown response");
     }
 
-    float voltage = static_cast<float>(raw) * ADS1118_LSB_V;
-
-    bool detected = (raw != static_cast<int16_t>(0xFFFF) && raw != 0x0000);
-
-    if (detected) {
-        s_ads_last_raw = raw;
-    }
-
-    hal_log("ESP32: ADS1118 detect: raw=%d (0x%04X), voltage=%.4fV %s",
-            raw, uval, voltage,
-            detected ? "OK" : "FAIL");
-
-    return detected;
+    return false;
 }
 
 float hal_steer_angle_read_deg(void) {
+    if (!s_ads_detected) {
+        return 0.0f;  // Not detected – return neutral
+    }
+
     // Check if enough time has passed for the conversion to complete
     uint32_t elapsed = millis() - s_ads_last_conv_start;
     if (elapsed >= ADS1118_CONV_MS) {
