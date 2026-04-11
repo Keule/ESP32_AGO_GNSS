@@ -15,6 +15,7 @@
 #include <Arduino.h>
 #include <FreeRTOS.h>
 #include <esp_task_wdt.h>
+#include <esp_ota_ops.h>
 
 #include "hal/hal.h"
 #include "hal_esp32/hal_impl.h"
@@ -122,6 +123,21 @@ void setup() {
     hal_esp32_init_all();
 
     // -----------------------------------------------------------------
+    // Firmware Version & Build Info (always printed)
+    // -----------------------------------------------------------------
+    {
+        SdOtaVersion ver = sdOtaGetCurrentVersion();
+        const esp_partition_t* part = esp_ota_get_running_partition();
+        hal_log("========================================");
+        hal_log("  AgSteer Firmware v%u.%u.%u", ver.major, ver.minor, ver.patch);
+        hal_log("  Build: %s %s", __DATE__, __TIME__);
+        hal_log("  Partition: %s (0x%06X)", part ? part->label : "?",
+                part ? (unsigned)part->address : 0);
+        hal_log("  Flash: %d MB free", (int)(ESP.getFreeSketchSpace() / 1024));
+        hal_log("========================================");
+    }
+
+    // -----------------------------------------------------------------
     // SD-Card OTA Firmware Update
     // -----------------------------------------------------------------
     // Check if a firmware update file is present on the SD card.
@@ -137,9 +153,6 @@ void setup() {
     // the SD card before booting.
     // -----------------------------------------------------------------
     {
-        SdOtaVersion ver = sdOtaGetCurrentVersion();
-        hal_log("Main: firmware v%u.%u.%u", ver.major, ver.minor, ver.patch);
-
         if (isFirmwareUpdateAvailableOnSD()) {
             hal_log("Main: firmware update detected on SD card – starting update");
             updateFirmwareFromSD();
