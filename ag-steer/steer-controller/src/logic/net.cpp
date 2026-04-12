@@ -57,8 +57,10 @@ void netInit(void) {
 // ===================================================================
 void netProcessFrame(uint8_t src, uint8_t pgn,
                      const uint8_t* payload, size_t payload_len) {
-    // Ignore our own frames echoed back via UDP broadcast
-    if (src == AOG_SRC_STEER) return;
+    // Only process frames from AgIO (0x7F).
+    // Ignore our own frames (0x7E) echoed back via broadcast,
+    // and any other module-to-module traffic.
+    if (src != AOG_SRC_AGIO) return;
 
     switch (pgn) {
         case PGN_HELLO_FROM_AGIO: {
@@ -188,6 +190,9 @@ void netPollReceive(void) {
         int rx_len = hal_net_receive(rx_buf, sizeof(rx_buf), &src_port);
 
         if (rx_len <= 0) break;
+
+        // Quick filter: skip non-AOG frames early (NMEA starts with '$' = 0x24)
+        if (rx_buf[0] != AOG_ID_1) continue;
 
         // Validate frame
         uint8_t frame_src = 0;

@@ -97,8 +97,15 @@ bool aogValidateFrame(const uint8_t* frame, size_t frame_len,
     }
     uint8_t expected_crc = static_cast<uint8_t>(sum & 0xFF);
     if (frame[crc_idx] != expected_crc) {
-        hal_log("AOG: CRC mismatch: got 0x%02X, expected 0x%02X (Src=%u PGN=0x%02X)",
-                frame[crc_idx], expected_crc, src, pgn);
+        // Rate-limit CRC mismatch logs (max once per 10s)
+        static uint32_t s_last_crc_log_ms = 0;
+        extern uint32_t hal_millis(void);
+        uint32_t now = hal_millis();
+        if (now - s_last_crc_log_ms >= 10000) {
+            s_last_crc_log_ms = now;
+            hal_log("AOG: CRC mismatch: got 0x%02X, expected 0x%02X (Src=%u PGN=0x%02X)",
+                    frame[crc_idx], expected_crc, src, pgn);
+        }
         return false;
     }
 
