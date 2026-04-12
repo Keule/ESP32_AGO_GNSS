@@ -324,9 +324,24 @@ static bool s_ads1118_detected = false;
 static constexpr float ADS1118_LSB_V = 0.000125f;  // 4.096 / 32768 = 125 uV
 
 // --- libdriver interface functions (static, ESP32-specific) ---
+//
+// IMPORTANT: The shared sensorSPI bus is already initialised by
+// hal_sensor_spi_init() with SCK=16, MISO=15, MOSI=17 (NO CS pin).
+// The ADS1118 CS pin (GPIO 18) is managed manually here.
+//
+// The test script that works creates a NEW SPIClass with CS pin:
+//   spi_bus->begin(SCK, MISO, MOSI, CS)
+// We must replicate that CS pin configuration in spi_init().
+
+/// SPI clock: 2 MHz (safe for ADS1118, matches working test script)
+static constexpr uint32_t ADS1118_SPI_FREQ = 2000000;
 
 static uint8_t ads1118_if_spi_init(void) {
-    // SPI bus is already initialised by hal_sensor_spi_init()
+    // Configure CS pin as OUTPUT and hold HIGH (deselected)
+    // This is critical — without pinMode(OUTPUT), digitalWrite may not
+    // drive the pin correctly on all ESP32-S3 GPIOs.
+    pinMode(CS_STEER_ANG, OUTPUT);
+    digitalWrite(CS_STEER_ANG, HIGH);
     return 0;
 }
 
@@ -341,7 +356,7 @@ static uint8_t ads1118_if_spi_transmit(uint8_t *tx, uint8_t *rx, uint16_t len) {
     digitalWrite(CS_ACT, HIGH);
 
     // ADS1118 uses SPI Mode 1 (CPOL=0, CPHA=1) per datasheet
-    sensorSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE1));
+    sensorSPI.beginTransaction(SPISettings(ADS1118_SPI_FREQ, MSBFIRST, SPI_MODE1));
     digitalWrite(CS_STEER_ANG, LOW);
 
     for (uint16_t i = 0; i < len; i++) {
