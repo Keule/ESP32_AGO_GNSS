@@ -243,8 +243,8 @@ bool hal_imu_detect(void) {
 //   ADS1118 CS    -> GPIO 18
 //
 // Calibration:
-//   Raw ADC min (left stop)  -> -45°
-//   Raw ADC max (right stop) -> +45°
+//   Raw ADC min (left stop)  -> -22.5°
+//   Raw ADC max (right stop) -> +22.5°
 //   Stored in NVS (Preferences) and survives reboots.
 // ===================================================================
 
@@ -256,8 +256,8 @@ static bool s_ads1118_detected = false;
 
 /// Calibration state
 static bool   s_calibrated = false;
-static int16_t s_cal_left_raw  = 0;   // ADC value at left stop  -> -45°
-static int16_t s_cal_right_raw = 0;   // ADC value at right stop -> +45°
+static int16_t s_cal_left_raw  = 0;   // ADC value at left stop  -> -22.5°
+static int16_t s_cal_right_raw = 0;   // ADC value at right stop -> +22.5°
 
 /// NVS namespace and keys for calibration persistence
 static const char* NVS_NAMESPACE = "agsteer";
@@ -619,7 +619,7 @@ float hal_steer_angle_read_deg(void) {
     // Read raw ADC value directly (bypasses libdriver's config read-back)
     int16_t raw = ads1118_read_raw();
 
-    // Map raw ADC to -45°..+45° using calibrated min/max
+    // Map raw ADC to -22.5°..+22.5° using calibrated min/max
     int16_t span = s_cal_right_raw - s_cal_left_raw;
     if (span == 0) return 0.0f;
 
@@ -631,7 +631,7 @@ float hal_steer_angle_read_deg(void) {
     if (normalised > 1.0f) normalised = 1.0f;
 
     // Map 0..1 -> -45..+45 degrees
-    float angle = (normalised * 90.0f) - 45.0f;
+    float angle = (normalised * 45.0f) - 22.5f;
 
     return angle;
 }
