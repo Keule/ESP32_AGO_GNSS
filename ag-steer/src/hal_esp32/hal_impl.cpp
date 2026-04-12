@@ -39,6 +39,7 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <HardwareSerial.h>
+#include <Preferences.h>    // NVS flash storage for calibration
 #include "driver_ads1118.h"  // libdriver ADS1118
 
 // ===================================================================
@@ -297,57 +298,64 @@ bool hal_imu_detect(void) {
 // ===================================================================
 // ADS1118 - 16-Bit ADC for steering angle potentiometer
 // ===================================================================
-// Uses libdriver/ads1118 (lib/ads1118/src/).
+// Uses libdriver/ads1118 (lib/ads1118/src/) for initialisation only.
+// For runtime reads, we bypass the libdriver and read raw ADC data
+// directly via SPI to avoid the "range is invalid" bug in the
+// libdriver's continuous_read() (which reads back the config register
+// and fails if SPI returns garbage).
 //
-// The libdriver uses a function-pointer interface for platform abstraction.
-// SPI interface functions are implemented here to access the shared sensorSPI
-// bus (FSPI/SPI2_HOST) and manage CS for other devices.
+// The libdriver is used only for:
+//   - ads1118_init() — verify interface functions
+//   - ads1118_set_channel/range/rate/mode — configure the chip
+//   - ads1118_start_continuous_read() — start continuous conversion
 //
-// Config: AIN0 vs GND, +/-4.096V, continuous conversion, 250 SPS.
-// ADC result: 16-bit signed, 1 LSB = 0.125 mV.
-// 0-3.3V poti -> raw 0 to ~26880.
+// All subsequent reads use ads1118_read_raw() which sends 0xFF×2
+// and reads back 2 bytes as a raw int16_t ADC value. No config
+// register read-back, no range validation.
 //
 // Wiring:
 //   ADS1118 DOUT  -> GPIO 15 (MISO)
 //   ADS1118 DIN   -> GPIO 17 (MOSI)
 //   ADS1118 SCLK  -> GPIO 16 (SCK)
 //   ADS1118 CS    -> GPIO 18
+//
+// Calibration:
+//   Raw ADC min (left stop)  -> -45°
+//   Raw ADC max (right stop) -> +45°
+//   Stored in NVS (Preferences) and survives reboots.
 // ===================================================================
 
-/// libdriver ADS1118 handle
+/// libdriver ADS1118 handle (used for init/config only)
 static ads1118_handle_t s_ads1118_handle;
 
 /// ADS1118 detected flag
 static bool s_ads1118_detected = false;
 
-/// 1 LSB in volts (+/-4.096V over 32768 steps)
-static constexpr float ADS1118_LSB_V = 0.000125f;  // 4.096 / 32768 = 125 uV
+/// Calibration state
+static bool   s_calibrated = false;
+static int16_t s_cal_left_raw  = 0;   // ADC value at left stop  -> -45°
+static int16_t s_cal_right_raw = 0;   // ADC value at right stop -> +45°
+
+/// NVS namespace and keys for calibration persistence
+static const char* NVS_NAMESPACE = "agsteer";
+static const char* NVS_KEY_CAL_VALID  = "cal_v";
+static const char* NVS_KEY_CAL_LEFT   = "cal_l";
+static const char* NVS_KEY_CAL_RIGHT  = "cal_r";
+static constexpr uint32_t NVS_CAL_MAGIC = 0xA6511C00;  // magic to validate stored data
 
 // --- libdriver interface functions (static, ESP32-specific) ---
-//
-// IMPORTANT: The shared sensorSPI bus is already initialised by
-// hal_sensor_spi_init() with SCK=16, MISO=15, MOSI=17 (NO CS pin).
-// The ADS1118 CS pin (GPIO 18) is managed manually here.
-//
-// The test script that works creates a NEW SPIClass with CS pin:
-//   spi_bus->begin(SCK, MISO, MOSI, CS)
-// We must replicate that CS pin configuration in spi_init().
 
 /// SPI clock: 2 MHz (safe for ADS1118, matches working test script)
 static constexpr uint32_t ADS1118_SPI_FREQ = 2000000;
 
 static uint8_t ads1118_if_spi_init(void) {
-    // Configure CS pin as OUTPUT and hold HIGH (deselected)
-    // This is critical — without pinMode(OUTPUT), digitalWrite may not
-    // drive the pin correctly on all ESP32-S3 GPIOs.
     pinMode(CS_STEER_ANG, OUTPUT);
     digitalWrite(CS_STEER_ANG, HIGH);
     return 0;
 }
 
 static uint8_t ads1118_if_spi_deinit(void) {
-    // Don't deinit shared bus — other devices need it
-    return 0;
+    return 0;  // Don't deinit shared bus
 }
 
 static uint8_t ads1118_if_spi_transmit(uint8_t *tx, uint8_t *rx, uint16_t len) {
@@ -381,6 +389,111 @@ static void ads1118_if_debug_print(const char *const fmt, ...) {
     Serial.print(buf);
 }
 
+// --- Direct raw ADC read (bypasses libdriver) ---
+
+/// Read one raw 16-bit ADC sample directly via SPI.
+/// Sends 0xFF×2, receives 2 bytes as big-endian int16_t.
+/// This avoids the libdriver's config register read-back which can
+/// trigger "range is invalid" if SPI returns garbage.
+static int16_t ads1118_read_raw(void) {
+    uint8_t tx[2] = {0xFF, 0xFF};
+    uint8_t rx[2];
+    ads1118_if_spi_transmit(tx, rx, 2);
+    return static_cast<int16_t>((static_cast<uint16_t>(rx[0]) << 8) | rx[1]);
+}
+
+/// Read multiple raw samples and return the median value.
+/// More robust than average against outliers.
+/// @param samples  number of samples to read (should be odd for true median)
+/// @param delay_ms delay between samples in ms (default: 5ms for 250 SPS)
+static int16_t ads1118_read_raw_median(int samples, int sample_delay_ms = 5) {
+    // Buffer for samples (max 31, enough for median)
+    int16_t buf[31];
+    if (samples > 31) samples = 31;
+    if (samples < 1) samples = 1;
+
+    for (int i = 0; i < samples; i++) {
+        buf[i] = ads1118_read_raw();
+        if (sample_delay_ms > 0) delay(sample_delay_ms);
+    }
+
+    // Simple bubble sort for small array
+    for (int i = 0; i < samples - 1; i++) {
+        for (int j = i + 1; j < samples; j++) {
+            if (buf[j] < buf[i]) {
+                int16_t tmp = buf[i];
+                buf[i] = buf[j];
+                buf[j] = tmp;
+            }
+        }
+    }
+
+    return buf[samples / 2];  // median
+}
+
+// --- Calibration persistence (NVS) ---
+
+/// Load calibration from NVS flash.
+/// Returns true if valid calibration was loaded.
+static bool steer_cal_load(void) {
+    Preferences prefs;
+    if (!prefs.begin(NVS_NAMESPACE, true)) {  // read-only mode
+        hal_log("SteerCal: NVS open failed");
+        return false;
+    }
+
+    uint32_t magic = prefs.getUInt(NVS_KEY_CAL_VALID, 0);
+    if (magic != NVS_CAL_MAGIC) {
+        prefs.end();
+        hal_log("SteerCal: no valid calibration in NVS");
+        return false;
+    }
+
+    s_cal_left_raw  = static_cast<int16_t>(prefs.getInt(NVS_KEY_CAL_LEFT, 0));
+    s_cal_right_raw = static_cast<int16_t>(prefs.getInt(NVS_KEY_CAL_RIGHT, 0));
+    s_calibrated = true;
+
+    prefs.end();
+
+    hal_log("SteerCal: loaded from NVS (left=%d, right=%d)",
+            s_cal_left_raw, s_cal_right_raw);
+    return true;
+}
+
+/// Save calibration to NVS flash.
+static void steer_cal_save(void) {
+    Preferences prefs;
+    if (!prefs.begin(NVS_NAMESPACE, false)) {  // read-write mode
+        hal_log("SteerCal: NVS open failed, cannot save!");
+        return;
+    }
+
+    prefs.putUInt(NVS_KEY_CAL_VALID, NVS_CAL_MAGIC);
+    prefs.putInt(NVS_KEY_CAL_LEFT, static_cast<int32_t>(s_cal_left_raw));
+    prefs.putInt(NVS_KEY_CAL_RIGHT, static_cast<int32_t>(s_cal_right_raw));
+
+    prefs.end();
+
+    hal_log("SteerCal: saved to NVS (left=%d, right=%d)",
+            s_cal_left_raw, s_cal_right_raw);
+}
+
+/// Wait for user to press Enter on Serial monitor.
+static void wait_for_enter(void) {
+    while (true) {
+        if (Serial.available()) {
+            int c = Serial.read();
+            if (c == '\n' || c == '\r') {
+                // Drain any remaining newline chars
+                while (Serial.available()) Serial.read();
+                delay(50);
+                return;
+            }
+        }
+        delay(10);
+    }
+}
+
 void hal_steer_angle_begin(void) {
     // Ensure all other SPI device CS pins are configured as outputs
     pinMode(CS_IMU, OUTPUT);  digitalWrite(CS_IMU, HIGH);
@@ -407,55 +520,138 @@ void hal_steer_angle_begin(void) {
     ads1118_set_rate(&s_ads1118_handle, ADS1118_RATE_250SPS);
     ads1118_set_mode(&s_ads1118_handle, ADS1118_MODE_ADC);
 
-    hal_log("ESP32: ADS1118 configured (AIN0, +/-4.096V, 250 SPS, SPI SCK=%d MISO=%d MOSI=%d)",
-            SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI);
+    // Try to load calibration from NVS
+    steer_cal_load();
+
+    hal_log("ESP32: ADS1118 configured (AIN0, +/-4.096V, 250 SPS, calibrated=%s)",
+            s_calibrated ? "YES" : "NO");
 }
 
 bool hal_steer_angle_detect(void) {
-    // Detection: try a single read. If it succeeds, device is present.
-    // single_read triggers a conversion, waits for completion, and returns result.
-    int16_t raw;
-    float voltage;
-    uint8_t res = ads1118_single_read(&s_ads1118_handle, &raw, &voltage);
+    // Detection: try a direct raw read. If the value is not stuck at
+    // 0x0000 or 0xFFFF (floating MISO), the ADS1118 is present.
+    // Also discard 0x7FFF (all 1s in data, possible bus issue).
+    int16_t raw1 = ads1118_read_raw();
+    delay(10);
+    int16_t raw2 = ads1118_read_raw();
 
-    s_ads1118_detected = (res == 0);
+    // A real ADC should return different values on successive reads
+    // (noise) or at least a plausible value.
+    bool looks_valid = (raw1 != 0 && raw1 != -1 && raw1 != 0x7FFF &&
+                        raw2 != 0 && raw2 != -1 && raw2 != 0x7FFF);
+
+    s_ads1118_detected = looks_valid;
 
     if (s_ads1118_detected) {
-        hal_log("ESP32: ADS1118 DETECTED (raw=%d, %.3fV)", raw, voltage);
+        hal_log("ESP32: ADS1118 DETECTED (raw1=%d, raw2=%d)", raw1, raw2);
 
-        // Start continuous conversion for non-blocking control loop reads
-        res = ads1118_start_continuous_read(&s_ads1118_handle);
+        // Start continuous conversion mode
+        uint8_t res = ads1118_start_continuous_read(&s_ads1118_handle);
         if (res != 0) {
-            hal_log("ESP32: ADS1118 continuous read start FAILED (err=%u)", res);
-            s_ads1118_detected = false;
+            hal_log("ESP32: ADS1118 continuous start note: err=%u (using direct reads)", res);
+            // Don't fail detection — we use direct reads anyway
         } else {
             hal_log("ESP32: ADS1118 continuous mode started");
         }
     } else {
-        hal_log("ESP32: ADS1118 DETECT FAILED (err=%u)", res);
+        hal_log("ESP32: ADS1118 DETECT FAILED (raw1=0x%04X, raw2=0x%04X)",
+                (unsigned)raw1 & 0xFFFF, (unsigned)raw2 & 0xFFFF);
     }
 
     return s_ads1118_detected;
 }
 
-float hal_steer_angle_read_deg(void) {
+void hal_steer_angle_calibrate(void) {
     if (!s_ads1118_detected) {
-        return 0.0f;  // Not detected - return neutral
+        hal_log("SteerCal: ERROR — ADS1118 not detected, cannot calibrate");
+        return;
     }
 
-    // Non-blocking continuous read: returns latest conversion result.
-    int16_t raw;
-    float voltage;
-    uint8_t res = ads1118_continuous_read(&s_ads1118_handle, &raw, &voltage);
+    hal_log("========================================");
+    hal_log("  STEERING ANGLE CALIBRATION");
+    hal_log("========================================");
+    Serial.println();
+    Serial.println("=== Lenkwinkel Kalibrierung ===");
+    Serial.println();
 
-    if (res != 0) {
-        return 0.0f;  // Read error - return neutral
+    // --- LEFT STOP ---
+    Serial.println("1) Lenkung ganz nach LINKS fahren (linker Anschlag)");
+    Serial.println("   Dann ENTER druecken...");
+    Serial.flush();
+    wait_for_enter();
+
+    // Read 11 samples, take median
+    int16_t left_val = ads1118_read_raw_median(11, 8);
+    hal_log("SteerCal: left stop  -> raw = %d", left_val);
+    Serial.printf("   Wert: %d\n", left_val);
+    Serial.println();
+
+    // --- RIGHT STOP ---
+    Serial.println("2) Lenkung ganz nach RECHTS fahren (rechter Anschlag)");
+    Serial.println("   Dann ENTER druecken...");
+    Serial.flush();
+    wait_for_enter();
+
+    int16_t right_val = ads1118_read_raw_median(11, 8);
+    hal_log("SteerCal: right stop -> raw = %d", right_val);
+    Serial.printf("   Wert: %d\n", right_val);
+    Serial.println();
+
+    // --- Validate ---
+    if (left_val == right_val) {
+        hal_log("SteerCal: ERROR — left == right (%d), no steering range!", left_val);
+        Serial.println("FEHLER: Links und Rechts sind gleich! Nochmal versuchen.");
+        Serial.println();
+        return;
     }
 
-    // Normalise to 0.0 .. 1.0 (3.3V poti supply)
-    float normalised = voltage / 3.3f;
+    // Ensure left < right (swap if poti is wired in reverse)
+    if (left_val > right_val) {
+        int16_t tmp = left_val;
+        left_val = right_val;
+        right_val = tmp;
+        hal_log("SteerCal: values swapped (left > right), poti wiring reversed");
+        Serial.println("   Hinweis: Poti polaritaet automatisch korrigiert");
+    }
 
-    // Clamp
+    s_cal_left_raw = left_val;
+    s_cal_right_raw = right_val;
+    s_calibrated = true;
+
+    // Save to NVS
+    steer_cal_save();
+
+    // Show summary
+    int16_t span = right_val - left_val;
+    float voltage_left  = left_val  * 4.096f / 32768.0f;
+    float voltage_right = right_val * 4.096f / 32768.0f;
+
+    Serial.println("=== Kalibrierung abgeschlossen ===");
+    Serial.printf("   Links:  raw=%6d  (%.3f V)  -> -45.0°\n", left_val, voltage_left);
+    Serial.printf("   Rechts: raw=%6d  (%.3f V)  -> +45.0°\n", right_val, voltage_right);
+    Serial.printf("   Spanne: %d LSB  (%.3f V)\n", span, voltage_right - voltage_left);
+    Serial.println();
+    Serial.println("Werte im Flash gespeichert. Kalibrierung ueberlebt Neustart.");
+    Serial.println("========================================");
+    Serial.println();
+}
+
+float hal_steer_angle_read_deg(void) {
+    if (!s_ads1118_detected || !s_calibrated) {
+        return 0.0f;  // Not detected or not calibrated — return neutral
+    }
+
+    // Read raw ADC value directly (bypasses libdriver's config read-back)
+    int16_t raw = ads1118_read_raw();
+
+    // Map raw ADC to -45°..+45° using calibrated min/max
+    int16_t span = s_cal_right_raw - s_cal_left_raw;
+    if (span == 0) return 0.0f;
+
+    // Normalise to 0.0..1.0 within calibrated range
+    float normalised = static_cast<float>(raw - s_cal_left_raw) / static_cast<float>(span);
+
+    // Clamp to [0, 1]
     if (normalised < 0.0f) normalised = 0.0f;
     if (normalised > 1.0f) normalised = 1.0f;
 
@@ -463,6 +659,10 @@ float hal_steer_angle_read_deg(void) {
     float angle = (normalised * 90.0f) - 45.0f;
 
     return angle;
+}
+
+bool hal_steer_angle_is_calibrated(void) {
+    return s_calibrated;
 }
 
 // ===================================================================

@@ -108,11 +108,23 @@ bool hal_imu_detect(void);
 /// Initialise steering angle sensor on SPI.
 void hal_steer_angle_begin(void);
 
-/// Read current steering angle in degrees.
-float hal_steer_angle_read_deg(void);
-
 /// Detect if steer angle sensor hardware is present (call after hal_steer_angle_begin).
 bool hal_steer_angle_detect(void);
+
+/// Run interactive steering angle calibration.
+/// Prompts via Serial: move to left stop, then right stop.
+/// Stores calibrated min/max raw ADC values in NVS (persistent).
+/// Must be called AFTER hal_steer_angle_detect() succeeds.
+void hal_steer_angle_calibrate(void);
+
+/// Check if steering angle has a valid calibration stored.
+/// Returns true if calibration was loaded from NVS.
+bool hal_steer_angle_is_calibrated(void);
+
+/// Read current steering angle in degrees.
+/// Uses calibrated min/max to map ADC to -45°..+45°.
+/// If not calibrated, returns 0.0.
+float hal_steer_angle_read_deg(void);
 
 // --- Actuator ---
 

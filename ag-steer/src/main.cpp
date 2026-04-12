@@ -176,6 +176,47 @@ void setup() {
     // Initialise module system – detect hardware for all modules
     modulesInit();
 
+    // -----------------------------------------------------------------
+    // Steering Angle Calibration
+    // -----------------------------------------------------------------
+    // On first boot (no calibration in NVS), the interactive calibration
+    // runs automatically. On subsequent boots, the stored calibration
+    // is loaded from NVS. Press 'c' within 3s to force recalibration.
+    //
+    // The user is prompted via Serial to move steering to left/right
+    // stops. Values are stored in NVS and survive reboots.
+    // -----------------------------------------------------------------
+    {
+        bool need_cal = !hal_steer_angle_is_calibrated();
+
+        if (!need_cal) {
+            // Already calibrated — give user a chance to recalibrate
+            uint32_t cal_wait_start = millis();
+            Serial.println();
+            Serial.println("Druecke 'c' + ENTER fuer Neukalibrierung (3s)...");
+            Serial.flush();
+            while (millis() - cal_wait_start < 3000) {
+                if (Serial.available()) {
+                    int c = Serial.read();
+                    if (c == 'c' || c == 'C') {
+                        need_cal = true;
+                        while (Serial.available()) Serial.read();
+                        break;
+                    }
+                }
+                delay(10);
+            }
+        }
+
+        if (need_cal) {
+            hal_log("Main: %s calibration",
+                    hal_steer_angle_is_calibrated() ? "forced re" : "initial");
+            hal_steer_angle_calibrate();
+        } else {
+            hal_log("Main: calibration OK (loaded from NVS)");
+        }
+    }
+
     // Initialise hardware status monitoring
     hwStatusInit();
 
