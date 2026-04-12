@@ -103,8 +103,14 @@ bool aogValidateFrame(const uint8_t* frame, size_t frame_len,
         uint32_t now = hal_millis();
         if (now - s_last_crc_log_ms >= 10000) {
             s_last_crc_log_ms = now;
-            hal_log("AOG: CRC mismatch: got 0x%02X, expected 0x%02X (Src=%u PGN=0x%02X)",
-                    frame[crc_idx], expected_crc, src, pgn);
+            // Include hex dump for diagnosis
+            char hexbuf[128];
+            char* p = hexbuf;
+            for (size_t i = 0; i < frame_len && (p - hexbuf) < (int)sizeof(hexbuf) - 4; i++) {
+                p += snprintf(p, 4, "%02X ", frame[i]);
+            }
+            hal_log("AOG: CRC mismatch: got 0x%02X, exp 0x%02X (Src=%u PGN=0x%02X) [%s]",
+                    frame[crc_idx], expected_crc, src, pgn, hexbuf);
         }
         return false;
     }
