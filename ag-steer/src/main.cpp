@@ -1,6 +1,6 @@
 /**
  * @file main.cpp
- * @brief TEST BUILD STEP 3a - only GNSS UARTs, isolate crash.
+ * @brief TEST BUILD STEP 3b - UART2 heading: try different baud rates.
  */
 
 #include <Arduino.h>
@@ -14,22 +14,32 @@ void setup() {
     Serial.begin(115200);
     delay(500);
     Serial.println();
-    Serial.println("=== STEP3a: GNSS UARTs only ===");
+    Serial.println("=== STEP3b: UART2 baud rate test ===");
     Serial.flush();
 
-    Serial.print("[1] GNSS Main begin (RX=45 TX=46 @ 460800)... ");
-    Serial.flush();
+    // UART1 always works (we know from STEP3a)
     gnssMainSerial.begin(GNSS_BAUD_RATE, SERIAL_8N1, GNSS_MAIN_RX, GNSS_MAIN_TX);
-    Serial.println("OK");
+    Serial.printf("[OK] UART1 Main @ 460800 (RX=%d TX=%d)\n", GNSS_MAIN_RX, GNSS_MAIN_TX);
     Serial.flush();
 
-    Serial.print("[2] GNSS Heading begin (RX=43 TX=44 @ 460800)... ");
-    Serial.flush();
-    gnssHeadingSerial.begin(GNSS_BAUD_RATE, SERIAL_8N1, GNSS_HEADING_RX, GNSS_HEADING_TX);
-    Serial.println("OK");
-    Serial.flush();
+    // Test UART2 with increasing baud rates
+    const int bauds[] = {9600, 115200, 460800};
+    const char* baud_names[] = {"9600", "115200", "460800"};
 
-    Serial.println("=== STEP3a: ALL OK ===");
+    for (int i = 0; i < 3; i++) {
+        Serial.printf("[TEST] UART2 Heading @ %s (RX=%d TX=%d)... ",
+                      baud_names[i], GNSS_HEADING_RX, GNSS_HEADING_TX);
+        Serial.flush();
+
+        gnssHeadingSerial.updateBaudRate(bauds[i]);
+        // If updateBaudRate doesn't work, end and re-begin
+        gnssHeadingSerial.end();
+        gnssHeadingSerial.begin(bauds[i], SERIAL_8N1, GNSS_HEADING_RX, GNSS_HEADING_TX);
+        Serial.println("OK");
+        Serial.flush();
+    }
+
+    Serial.println("=== STEP3b: ALL OK ===");
     Serial.flush();
 }
 
