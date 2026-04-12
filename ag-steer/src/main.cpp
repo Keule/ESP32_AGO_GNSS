@@ -1,45 +1,44 @@
 /**
  * @file main.cpp
- * @brief TEST BUILD STEP 3b - UART2 heading: try different baud rates.
+ * @brief TEST BUILD STEP 3c - swap UART1/UART2 to isolate the issue.
+ *
+ * Test A: UART2 on GPIO 45/46 (pins that work with UART1)
+ * Test B: UART1 on GPIO 43/44 (pins that crash with UART2)
  */
 
 #include <Arduino.h>
 #include <HardwareSerial.h>
 #include "hardware_pins.h"
 
-static HardwareSerial gnssMainSerial(1);
-static HardwareSerial gnssHeadingSerial(2);
-
 void setup() {
     Serial.begin(115200);
     delay(500);
     Serial.println();
-    Serial.println("=== STEP3b: UART2 baud rate test ===");
+    Serial.println("=== STEP3c: UART SWAP TEST ===");
     Serial.flush();
 
-    // UART1 always works (we know from STEP3a)
-    gnssMainSerial.begin(GNSS_BAUD_RATE, SERIAL_8N1, GNSS_MAIN_RX, GNSS_MAIN_TX);
-    Serial.printf("[OK] UART1 Main @ 460800 (RX=%d TX=%d)\n", GNSS_MAIN_RX, GNSS_MAIN_TX);
-    Serial.flush();
+    // TEST A: UART2 on the WORKING pins (45/46)
+    HardwareSerial testA(2);
+    Serial.print("[A] UART2 on GPIO 45/46... "); Serial.flush();
+    testA.begin(9600, SERIAL_8N1, GNSS_MAIN_RX, GNSS_MAIN_TX);
+    Serial.println("OK"); Serial.flush();
+    testA.end();
 
-    // Test UART2 with increasing baud rates
-    const int bauds[] = {9600, 115200, 460800};
-    const char* baud_names[] = {"9600", "115200", "460800"};
+    // TEST B: UART1 on the CRASHING pins (43/44)
+    HardwareSerial testB(1);
+    Serial.print("[B] UART1 on GPIO 43/44... "); Serial.flush();
+    testB.begin(9600, SERIAL_8N1, GNSS_HEADING_RX, GNSS_HEADING_TX);
+    Serial.println("OK"); Serial.flush();
+    testB.end();
 
-    for (int i = 0; i < 3; i++) {
-        Serial.printf("[TEST] UART2 Heading @ %s (RX=%d TX=%d)... ",
-                      baud_names[i], GNSS_HEADING_RX, GNSS_HEADING_TX);
-        Serial.flush();
+    // TEST C: UART2 as LOCAL var on GPIO 43/44
+    HardwareSerial testC(2);
+    Serial.print("[C] UART2 local on GPIO 43/44... "); Serial.flush();
+    testC.begin(9600, SERIAL_8N1, GNSS_HEADING_RX, GNSS_HEADING_TX);
+    Serial.println("OK"); Serial.flush();
+    testC.end();
 
-        gnssHeadingSerial.updateBaudRate(bauds[i]);
-        // If updateBaudRate doesn't work, end and re-begin
-        gnssHeadingSerial.end();
-        gnssHeadingSerial.begin(bauds[i], SERIAL_8N1, GNSS_HEADING_RX, GNSS_HEADING_TX);
-        Serial.println("OK");
-        Serial.flush();
-    }
-
-    Serial.println("=== STEP3b: ALL OK ===");
+    Serial.println("=== STEP3c: ALL OK ===");
     Serial.flush();
 }
 
