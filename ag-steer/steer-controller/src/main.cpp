@@ -270,7 +270,7 @@ void loop() {
                 g_nav.safety_ok ? "OK" : "KICK",
                 g_nav.work_switch ? "ON" : "OFF",
                 g_nav.steer_switch ? "ON" : "OFF",
-                desiredSteerAngleDeg,
+                (double)desiredSteerAngleDeg,
                 hal_net_is_connected() ? "UP" : "DOWN");
     }
 

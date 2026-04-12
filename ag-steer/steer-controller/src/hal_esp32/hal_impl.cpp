@@ -90,7 +90,7 @@ static bool s_eth_has_ip     = false;   // true if ARDUINO_EVENT_ETH_GOT_IP
 static SPIClass sensorSPI(FSPI);
 
 // ===================================================================
-// Mutex (FreeRTOS recursive mutex)
+// Mutex (FreeRTOS recursive mutex) — for NavigationState protection
 // ===================================================================
 #if configSUPPORT_STATIC_ALLOCATION
 static StaticSemaphore_t s_mutex_buffer;
@@ -98,6 +98,13 @@ static SemaphoreHandle_t s_mutex = nullptr;
 #else
 static SemaphoreHandle_t s_mutex = nullptr;
 #endif
+
+// ===================================================================
+// Serial log mutex — protects USB CDC Serial from concurrent access
+// USB CDC (Serial on ESP32-S3) is NOT thread-safe and will crash
+// if two tasks call Serial.printf() simultaneously on different cores.
+// ===================================================================
+static SemaphoreHandle_t s_log_mutex = nullptr;
 
 // ===================================================================
 // Timing
@@ -123,18 +130,33 @@ void hal_log(const char* fmt, ...) {
     va_start(args, fmt);
     std::vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
+
+    // Protect Serial (USB CDC) from concurrent access across cores.
+    // Without this mutex, simultaneous hal_log() calls from different
+    // FreeRTOS tasks (e.g. loop on Core 1 + commTask on Core 0) cause
+    // a LoadProhibited panic in the USB CDC driver internals.
+    if (s_log_mutex) {
+        xSemaphoreTake(s_log_mutex, portMAX_DELAY);
+    }
     Serial.printf("[%10lu] %s\n", millis(), buf);
+    if (s_log_mutex) {
+        xSemaphoreGive(s_log_mutex);
+    }
 }
 
 // ===================================================================
 // Mutex
 // ===================================================================
 void hal_mutex_init(void) {
+    // State mutex (recursive, for NavigationState)
 #if configSUPPORT_STATIC_ALLOCATION
     s_mutex = xSemaphoreCreateRecursiveMutexStatic(&s_mutex_buffer);
 #else
     s_mutex = xSemaphoreCreateRecursiveMutex();
 #endif
+
+    // Serial log mutex (binary, protects USB CDC from concurrent access)
+    s_log_mutex = xSemaphoreCreateMutex();
 }
 
 void hal_mutex_lock(void) {
