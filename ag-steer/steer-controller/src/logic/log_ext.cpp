@@ -59,6 +59,11 @@ static const char* levelToStr(esp_log_level_t lvl) {
 }
 
 // ===================================================================
+// Forward declaration
+// ===================================================================
+static void logPrintStatusFn(void);
+
+// ===================================================================
 // Serial-Kommando verarbeiten
 // ===================================================================
 void logProcessSerialCmd(const char* cmd) {
@@ -74,7 +79,7 @@ void logProcessSerialCmd(const char* cmd) {
 
         // "log status"
         if (std::strcmp(arg, "status") == 0) {
-            logPrintStatus();
+            logPrintStatusFn();
             return;
         }
 
@@ -155,9 +160,16 @@ void logProcessSerialCmd(const char* cmd) {
 }
 
 // ===================================================================
-// Status ausgeben
+// Status ausgeben (oeffentliche API)
 // ===================================================================
 void logPrintStatus(void) {
+    logPrintStatusFn();
+}
+
+// ===================================================================
+// Status ausgeben (interne Implementierung)
+// ===================================================================
+static void logPrintStatusFn(void) {
     ESP_LOGI("LOG", "=== Log Configuration ===");
 
     // Filter-Status
