@@ -190,7 +190,7 @@ static_assert(sizeof(AogHelloReplyGps) == 5, "AogHelloReplyGps must be 5 bytes")
 // ===================================================================
 
 struct __attribute__((packed)) AogSteerDataIn {
-    int16_t  speed;           // speed [cm/s], signed
+    int16_t  speed;           // speed [km/h * 10], signed
     uint8_t  status;          // bitfield: bit0=workSwitch, bit1=steerSwitch, bit2=on
     int16_t  steerAngle;      // desired steer angle [degrees * 100], signed
     uint8_t  xte;             // cross track error
@@ -231,8 +231,8 @@ static_assert(sizeof(AogSteerSettingsIn) == 17, "AogSteerSettingsIn must be 17 b
 
 struct __attribute__((packed)) AogSteerStatusOut {
     int16_t  actualSteerAngle;  // measured angle [degrees * 100], signed
-    int16_t  imuHeading;        // IMU heading [degrees * 16], signed
-    int16_t  imuRoll;           // IMU roll [degrees * 16], signed
+    int16_t  imuHeading;        // IMU heading [degrees * 10], signed
+    int16_t  imuRoll;           // IMU roll [degrees * 10], signed
     uint8_t  switchStatus;      // steering switch state bits
     uint8_t  pwmDisplay;        // current PWM value (0-255)
 };
@@ -362,8 +362,8 @@ size_t encodeAogSubnetReply(uint8_t* buf, size_t buf_size,
 /// Encode Steer Status Out frame (PGN=0xFD, Len=8).
 size_t encodeAogSteerStatusOut(uint8_t* buf, size_t buf_size,
                                 int16_t actualAngleX100,
-                                int16_t headingX16,
-                                int16_t rollX16,
+                                int16_t headingX10,
+                                int16_t rollX10,
                                 uint8_t switchStatus,
                                 uint8_t pwmDisplay);
 

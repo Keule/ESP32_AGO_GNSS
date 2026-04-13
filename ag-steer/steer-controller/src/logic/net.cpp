@@ -236,8 +236,8 @@ void netSendAogFrames(void) {
     {
         StateLock lock;
         int16_t angle_x100 = static_cast<int16_t>(g_nav.steer_angle_deg * 100.0f);
-        int16_t heading_x16 = static_cast<int16_t>(g_nav.heading_deg * 16.0f);
-        int16_t roll_x16    = static_cast<int16_t>(g_nav.roll_deg * 16.0f);
+        int16_t heading_x10 = static_cast<int16_t>(g_nav.heading_deg * 10.0f);
+        int16_t roll_x10    = static_cast<int16_t>(g_nav.roll_deg * 10.0f);
 
         // Switch byte: bit 7 = safety (0=OK, 1=KICK), bit 0 = steer switch relay
         // Also include work switch state
@@ -251,7 +251,7 @@ void netSendAogFrames(void) {
             (g_nav.pid_output * 255.0f) / 65535.0f);
 
         tx_len = encodeAogSteerStatusOut(tx_buf, sizeof(tx_buf),
-                                          angle_x100, heading_x16, roll_x16,
+                                          angle_x100, heading_x10, roll_x10,
                                           switch_st, pwm_disp);
         if (tx_len > 0) {
             hal_net_send(tx_buf, tx_len, AOG_PORT_STEER);

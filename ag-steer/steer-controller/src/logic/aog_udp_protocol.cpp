@@ -179,14 +179,14 @@ size_t encodeAogSubnetReply(uint8_t* buf, size_t buf_size,
 // ===================================================================
 size_t encodeAogSteerStatusOut(uint8_t* buf, size_t buf_size,
                                 int16_t actualAngleX100,
-                                int16_t headingX16,
-                                int16_t rollX16,
+                                int16_t headingX10,
+                                int16_t rollX10,
                                 uint8_t switchStatus,
                                 uint8_t pwmDisplay) {
     AogSteerStatusOut status;
     status.actualSteerAngle = actualAngleX100;
-    status.imuHeading       = headingX16;
-    status.imuRoll          = rollX16;
+    status.imuHeading       = headingX10;
+    status.imuRoll          = rollX10;
     status.switchStatus     = switchStatus;
     status.pwmDisplay       = pwmDisplay;
     return aogBuildFrame(buf, buf_size, AOG_SRC_STEER, PGN_STEER_STATUS_OUT,
