@@ -235,15 +235,15 @@
 
         <div class="stats">
             <div class="stat-card">
-                <div class="number">5</div>
+                <div class="number">9</div>
                 <div class="label">Nachrichten</div>
             </div>
             <div class="stat-card">
-                <div class="number">3</div>
+                <div class="number">5</div>
                 <div class="label">Nutzer</div>
             </div>
             <div class="stat-card">
-                <div class="number">2</div>
+                <div class="number">4</div>
                 <div class="label">Assistent</div>
             </div>
             <div class="stat-card">
@@ -314,6 +314,57 @@ Branches: <code>main</code>, <code>feature/restructure-multi-device</code></div>
                 <div class="card">
                     <div class="role">Nutzer <span class="time">13.04.2026 ~10:10</span></div>
                     <div class="message">kannst du eine datei anlegen (html), die nach jeder frage/antwort in unserem chat den chatverlauf trackt?</div>
+                </div>
+            </div>
+
+            <!-- Nachricht 6 -->
+            <div class="entry assistant">
+                <div class="dot"></div>
+                <div class="card">
+                    <div class="role">Assistent <span class="time">13.04.2026 ~10:12</span></div>
+                    <div class="message">HTML-Datei erstellt unter <code>/home/z/my-project/download/chatverlauf.html</code>.
+
+Features: Dunkles Timeline-Design, Nutzer/Assistent-Markierungen, Statistik-Leiste, Zeitstempel, responsive Layout. Wird bei jeder neuen Nachricht automatisch aktualisiert.</div>
+                </div>
+            </div>
+
+            <!-- Nachricht 7 -->
+            <div class="entry user">
+                <div class="dot"></div>
+                <div class="card">
+                    <div class="role">Nutzer <span class="time">13.04.2026 ~10:15</span></div>
+                    <div class="message">sieht gut aus. brauchst du zum pushen einen token? erselle im repo ordner einen unterordner für Agenten, dort kommt der chatverlauf dann hin</div>
+                </div>
+            </div>
+
+            <!-- Nachricht 8 -->
+            <div class="entry assistant">
+                <div class="dot"></div>
+                <div class="card">
+                    <div class="role">Assistent <span class="time">13.04.2026 ~10:15</span></div>
+                    <div class="message">Ordner <code>Agenten/</code> erstellt, <code>chatverlauf.html</code> dorthin kopiert, Commit <code>b161e4e</code> erstellt.
+
+Frage an Nutzer: Token für Push bereitstellen oder selbst pushen?</div>
+                </div>
+            </div>
+
+            <!-- Nachricht 9 -->
+            <div class="entry user">
+                <div class="dot"></div>
+                <div class="card">
+                    <div class="role">Nutzer <span class="time">13.04.2026 ~10:18</span></div>
+                    <div class="message">GitHub Personal Access Token bereitgestellt (aus Sicherheitsgründen nicht im Log gespeichert).</div>
+                </div>
+            </div>
+
+            <!-- Nachricht 10 -->
+            <div class="entry assistant">
+                <div class="dot"></div>
+                <div class="card">
+                    <div class="role">Assistent <span class="time">13.04.2026 ~10:18</span></div>
+                    <div class="message">Erfolgreich gepusht! Commit <code>b161e4e</code> auf <code>main</code>. Token aus Git-Konfiguration entfernt.
+
+Sicherheitshinweis: Token rotieren/widerrufen empfohlen, da er im Chat sichtbar war.</div>
                 </div>
             </div>
 
