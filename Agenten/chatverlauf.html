@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatverlauf &mdash; ZAI_GPS Projekt</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0f1117;
+            color: #e0e0e0;
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            padding: 24px 32px;
+            border-bottom: 2px solid #e94560;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header h1 .icon { font-size: 1.6rem; }
+
+        .header .meta {
+            font-size: 0.82rem;
+            color: #8892a4;
+            margin-top: 6px;
+        }
+
+        .header .meta span {
+            background: rgba(255,255,255,0.08);
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-right: 8px;
+        }
+
+        .container {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 24px 16px 64px;
+        }
+
+        /* Stats Bar */
+        .stats {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+
+        .stat-card {
+            background: #1a1d27;
+            border: 1px solid #2a2d3a;
+            border-radius: 10px;
+            padding: 14px 20px;
+            flex: 1;
+            min-width: 120px;
+            text-align: center;
+        }
+
+        .stat-card .number {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: #e94560;
+        }
+
+        .stat-card .label {
+            font-size: 0.78rem;
+            color: #8892a4;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Timeline */
+        .timeline {
+            position: relative;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 20px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: #2a2d3a;
+        }
+
+        .entry {
+            position: relative;
+            margin-bottom: 20px;
+            padding-left: 52px;
+        }
+
+        .entry .dot {
+            position: absolute;
+            left: 13px;
+            top: 18px;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 2px solid #2a2d3a;
+        }
+
+        .entry.user .dot {
+            background: #e94560;
+            border-color: #e94560;
+            box-shadow: 0 0 8px rgba(233, 69, 96, 0.4);
+        }
+
+        .entry.assistant .dot {
+            background: #0f3460;
+            border-color: #533483;
+            box-shadow: 0 0 8px rgba(83, 52, 131, 0.4);
+        }
+
+        .entry .card {
+            background: #1a1d27;
+            border: 1px solid #2a2d3a;
+            border-radius: 12px;
+            padding: 16px 20px;
+            transition: border-color 0.2s;
+        }
+
+        .entry.user .card {
+            border-left: 3px solid #e94560;
+        }
+
+        .entry.assistant .card {
+            border-left: 3px solid #533483;
+        }
+
+        .entry .card:hover {
+            border-color: #444;
+        }
+
+        .entry .role {
+            font-size: 0.72rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-bottom: 6px;
+        }
+
+        .entry.user .role { color: #e94560; }
+        .entry.assistant .role { color: #a78bfa; }
+
+        .entry .time {
+            font-size: 0.7rem;
+            color: #555;
+            float: right;
+        }
+
+        .entry .message {
+            font-size: 0.92rem;
+            color: #c8ccd4;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .entry .message code {
+            background: #2a2d3a;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            color: #a78bfa;
+        }
+
+        .entry .message a {
+            color: #6fa3ef;
+            text-decoration: none;
+        }
+
+        .entry .message a:hover {
+            text-decoration: underline;
+        }
+
+        .entry .message ul, .entry .message ol {
+            margin: 8px 0 8px 20px;
+        }
+
+        .entry .message li {
+            margin-bottom: 4px;
+        }
+
+        .entry .message strong {
+            color: #fff;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 32px 16px;
+            color: #444;
+            font-size: 0.78rem;
+            border-top: 1px solid #1a1d27;
+            margin-top: 32px;
+        }
+
+        @media (max-width: 600px) {
+            .header { padding: 16px; }
+            .header h1 { font-size: 1.2rem; }
+            .stats { gap: 8px; }
+            .stat-card { padding: 10px 12px; }
+            .stat-card .number { font-size: 1.4rem; }
+            .entry { padding-left: 44px; }
+            .timeline::before { left: 16px; }
+            .entry .dot { left: 9px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1><span class="icon">&#128172;</span> Chatverlauf &mdash; ZAI_GPS Projekt</h1>
+        <div class="meta">
+            <span>GitHub: Keule/ZAI_GPS</span>
+            <span>Session: web-91699cc2</span>
+        </div>
+    </div>
+
+    <div class="container">
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="number">5</div>
+                <div class="label">Nachrichten</div>
+            </div>
+            <div class="stat-card">
+                <div class="number">3</div>
+                <div class="label">Nutzer</div>
+            </div>
+            <div class="stat-card">
+                <div class="number">2</div>
+                <div class="label">Assistent</div>
+            </div>
+            <div class="stat-card">
+                <div class="number">1</div>
+                <div class="label">Repo</div>
+            </div>
+        </div>
+
+        <div class="timeline">
+
+            <!-- Nachricht 1 -->
+            <div class="entry user">
+                <div class="dot"></div>
+                <div class="card">
+                    <div class="role">Nutzer <span class="time">13.04.2026 ~10:00</span></div>
+                    <div class="message">kannst du änderungen am code eine git repos vornehmen?</div>
+                </div>
+            </div>
+
+            <!-- Nachricht 2 -->
+            <div class="entry assistant">
+                <div class="dot"></div>
+                <div class="card">
+                    <div class="role">Assistent <span class="time">13.04.2026 ~10:00</span></div>
+                    <div class="message">Ja, ich kann Änderungen an Code in einem Git-Repository vornehmen! Ich habe Zugriff auf verschiedene Werkzeuge, die mir ermöglichen:
+
+1. <strong>Dateien lesen und bearbeiten</strong> – Ich kann bestehende Code-Dateien anzeigen, ändern und neue erstellen.
+2. <strong>Git-Befehle ausführen</strong> – Ich kann Commands wie <code>git status</code>, <code>git diff</code>, <code>git commit</code>, <code>git log</code>, <code>git branch</code>, <code>git checkout</code> und mehr ausführen.
+3. <strong>Neuen Code schreiben</strong> – Ich kann neue Dateien anlegen und bestehenden Code umschreiben oder erweitern.
+
+Damit ich loslegen kann, bräuchte ich folgende Informationen:
+- <strong>Welches Repository</strong> möchtest du bearbeiten? Gibt es bereits ein Projekt im aktuellen Arbeitsverzeichnis, oder soll ich ein Repo klonen?
+- <strong>Welche Änderungen</strong> möchtest du vornehmen? (z. B. Bugfix, neue Feature-Implementierung, Refactoring, etc.)</div>
+                </div>
+            </div>
+
+            <!-- Nachricht 3 -->
+            <div class="entry user">
+                <div class="dot"></div>
+                <div class="card">
+                    <div class="role">Nutzer <span class="time">13.04.2026 ~10:05</span></div>
+                    <div class="message">https://github.com/Keule/ZAI_GPS</div>
+                </div>
+            </div>
+
+            <!-- Nachricht 4 -->
+            <div class="entry assistant">
+                <div class="dot"></div>
+                <div class="card">
+                    <div class="role">Assistent <span class="time">13.04.2026 ~10:05</span></div>
+                    <div class="message">Das Repository wurde geklont und analysiert. Übersicht:
+
+<strong>ZAI_GPS — AgSteer Autosteer System für AgOpenGPS</strong>
+
+| Bereich | Status | Beschreibung |
+|---------|--------|--------------|
+| <strong>steer-controller/</strong> | Aktiv | Lenk-Controller (ESP32-S3, PID, ADS1118, IMU, Ethernet, OTA) |
+| <strong>gps-bridge/</strong> | Referenz-Code | GPS-Bridge (GNSS NMEA Parser, TODO) |
+| <strong>shared/</strong> | Geplant | Gemeinsamer Code |
+
+Branches: <code>main</code>, <code>feature/restructure-multi-device</code></div>
+                </div>
+            </div>
+
+            <!-- Nachricht 5 -->
+            <div class="entry user">
+                <div class="dot"></div>
+                <div class="card">
+                    <div class="role">Nutzer <span class="time">13.04.2026 ~10:10</span></div>
+                    <div class="message">kannst du eine datei anlegen (html), die nach jeder frage/antwort in unserem chat den chatverlauf trackt?</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <div class="footer">
+        ZAI Chatverlauf Tracker &mdash; Automatisch generiert &amp; bei jeder Nachricht aktualisiert
+    </div>
+
+</body>
+</html>
