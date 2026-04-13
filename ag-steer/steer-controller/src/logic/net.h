@@ -4,11 +4,14 @@
  *
  * Handles sending GPS and Steer status frames, and receiving
  * AgIO commands (hello, scan, subnet change, steer data).
+ *
+ * Uses the PGN library (pgn_types.h, pgn_codec.h, pgn_registry.h)
+ * for all protocol-level encoding/decoding.
  */
 
 #pragma once
 
-#include "aog_udp_protocol.h"
+#include "pgn_types.h"
 
 /// Initialise network (W5500 Ethernet via HAL).
 void netInit(void);
@@ -17,7 +20,7 @@ void netInit(void);
 /// Should be called frequently from commTask.
 void netPollReceive(void);
 
-/// Send periodic AOG frames (GPS main + steer status).
+/// Send periodic AOG frames (steer status + autosteer sensor data).
 /// Should be called at ~10 Hz from commTask.
 void netSendAogFrames(void);
 

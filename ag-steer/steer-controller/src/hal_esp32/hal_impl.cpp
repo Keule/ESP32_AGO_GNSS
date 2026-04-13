@@ -28,7 +28,7 @@
 #include "hal_impl.h"
 #include "hal/hal.h"
 #include "hardware_pins.h"
-#include "logic/aog_udp_protocol.h"
+#include "logic/pgn_types.h"
 
 // ===================================================================
 // Arduino / ESP32 includes
@@ -741,13 +741,13 @@ static void onEthEvent(WiFiEvent_t event) {
 
         // Start receive UDP listener on port 8888 (AgIO sends to this port)
         // Reference: ether.udpServerListenOnPort(&udpSteerRecv, 8888)
-        ethUDP_recv.begin(AOG_PORT_AGIO_RECV);
-        hal_log("ETH: UDP listening on port %u (AgIO sends here)", AOG_PORT_AGIO_RECV);
+        ethUDP_recv.begin(aog_port::AGIO_LISTEN);
+        hal_log("ETH: UDP listening on port %u (AgIO sends here)", aog_port::AGIO_LISTEN);
 
         // Start send UDP socket from port 5126 (our source port)
         // Reference: portMy = 5126
-        ethUDP_send.begin(AOG_PORT_STEER);
-        hal_log("ETH: UDP sending from port %u (to AgIO port %u)", AOG_PORT_STEER, AOG_PORT_AGIO);
+        ethUDP_send.begin(aog_port::STEER);
+        hal_log("ETH: UDP sending from port %u (to AgIO port %u)", aog_port::STEER, aog_port::AGIO_SEND);
         break;
 
     case ARDUINO_EVENT_ETH_DISCONNECTED:
@@ -828,7 +828,7 @@ void hal_net_send(const uint8_t* data, size_t len, uint16_t port) {
 
     // Always send TO AgIO port 9999 (port parameter is legacy, ignored)
     // Reference: portDestination = 9999
-    ethUDP_send.beginPacket(s_dest_ip, AOG_PORT_AGIO);
+    ethUDP_send.beginPacket(s_dest_ip, aog_port::AGIO_SEND);
     ethUDP_send.write(data, static_cast<size_t>(len));
     ethUDP_send.endPacket();
 }

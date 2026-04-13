@@ -9,7 +9,8 @@
  */
 
 #include "hw_status.h"
-#include "aog_udp_protocol.h"
+#include "pgn_codec.h"
+#include "pgn_types.h"
 #include "hal/hal.h"
 
 #include <cstdarg>
@@ -109,11 +110,11 @@ static void sendHwMessage(uint8_t src, uint8_t color, uint8_t duration,
     // Rate limit: minimum interval between messages
     if (now - s_last_msg_sent_ms < MIN_MSG_INTERVAL_MS) return;
 
-    uint8_t tx_buf[AOG_MAX_FRAME];
-    size_t len = encodeAogHardwareMessage(tx_buf, sizeof(tx_buf),
+    uint8_t tx_buf[aog_frame::MAX_FRAME];
+    size_t len = pgnEncodeHardwareMessage(tx_buf, sizeof(tx_buf),
                                            src, duration, color, text);
     if (len > 0) {
-        hal_net_send(tx_buf, len, AOG_PORT_AGIO);
+        hal_net_send(tx_buf, len, aog_port::AGIO_SEND);
         s_last_msg_sent_ms = now;
         hal_log("HWSTATUS: sent msg color=%u dur=%u \"%s\"",
                 (unsigned)color, (unsigned)duration, text);
@@ -125,7 +126,7 @@ static void sendHwMessage(uint8_t src, uint8_t color, uint8_t duration,
 // ===================================================================
 void hwStatusSendMessage(uint8_t src, HwSeverity severity, uint8_t duration,
                           const char* fmt, ...) {
-    char text[AOG_HWMSG_MAX_TEXT + 1];
+    char text[aog_frame::HWMSG_MAX_TEXT + 1];
     va_list args;
     va_start(args, fmt);
     std::vsnprintf(text, sizeof(text), fmt, args);
@@ -188,7 +189,7 @@ uint8_t hwStatusUpdate(bool connected,
         }
 
         // Build message text
-        char text[AOG_HWMSG_MAX_TEXT + 1];
+        char text[aog_frame::HWMSG_MAX_TEXT + 1];
         const char* name = s_subsys_names[i];
         const char* sev_text = (s_subsys[i].severity == HW_SEV_ERROR) ? "ERR" : "WARN";
 
@@ -196,8 +197,8 @@ uint8_t hwStatusUpdate(bool connected,
                       (s_subsys[i].severity == HW_SEV_ERROR) ? "Failure" : "Not Available");
 
         // Send from steer module source
-        sendHwMessage(AOG_SRC_STEER, s_subsys[i].severity,
-                      AOG_HWMSG_DURATION_PERSIST, text);
+        sendHwMessage(aog_src::STEER, s_subsys[i].severity,
+                      aog_hwmsg::DURATION_PERSIST, text);
 
         if (s_subsys[i].last_sent == 0) {
             // First time sending for this error
@@ -216,7 +217,7 @@ uint8_t hwStatusUpdate(bool connected,
         // All errors cleared
         s_had_errors = false;
         // Send a single "all OK" message (green)
-        sendHwMessage(AOG_SRC_STEER, HW_SEV_OK, 3, "All systems OK");
+        sendHwMessage(aog_src::STEER, HW_SEV_OK, 3, "All systems OK");
     }
 
     return err_count;

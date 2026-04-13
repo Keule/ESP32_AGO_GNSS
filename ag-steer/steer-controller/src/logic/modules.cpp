@@ -16,7 +16,8 @@
  */
 
 #include "modules.h"
-#include "aog_udp_protocol.h"
+#include "pgn_codec.h"
+#include "pgn_types.h"
 #include "global_state.h"
 #include "hal/hal.h"
 
@@ -29,7 +30,7 @@
 
 /// Module table – all modules this firmware implements
 static AogModuleInfo s_modules[AOG_MOD_COUNT] = {
-    { AOG_SRC_STEER,     AOG_PORT_STEER, "Steer", true, false },
+    { aog_src::STEER,     aog_port::STEER, "Steer", true, false },
 };
 
 /// Hardware detection results (filled by modulesInit)
@@ -127,7 +128,7 @@ void modulesSendHellos(void) {
         size_t len = 0;
         const char* label = nullptr;
 
-        if (mod.src_id == AOG_SRC_STEER) {
+        if (mod.src_id == aog_src::STEER) {
             // Steer hello: PGN=0x7E, Len=5
             // Payload: steerAngle×100(2) + sensorCounts(2) + switchByte(1)
             StateLock lock;
@@ -137,13 +138,13 @@ void modulesSendHellos(void) {
             if (!g_nav.safety_ok)   sw |= 0x80;  // bit 7 = safety
             if (g_nav.work_switch) sw |= 0x01;  // bit 0 = work switch
             if (g_nav.steer_switch) sw |= 0x02; // bit 1 = steer switch
-            len = encodeAogHelloReplySteer(buf, sizeof(buf), angle, counts, sw);
+            len = pgnEncodeHelloReplySteer(buf, sizeof(buf), angle, counts, sw);
             label = "SteerHello";
         }
 
         if (len > 0) {
             hal_net_send(buf, len, mod.port);
-            aogHexDump(label, buf, len);
+            pgnHexDump(label, buf, len);
             hal_log("MODULE: sent %s hello reply (%zu bytes, src=0x%02X, port=%u)",
                     mod.name, len, mod.src_id, (unsigned)mod.port);
         }
@@ -160,7 +161,7 @@ void modulesSendSubnetReplies(void) {
         if (!s_modules[i].enabled) continue;
 
         const AogModuleInfo& mod = s_modules[i];
-        size_t len = encodeAogSubnetReply(buf, sizeof(buf),
+        size_t len = pgnEncodeSubnetReply(buf, sizeof(buf),
                                            mod.src_id,
                                            s_module_ip, s_module_subnet);
         if (len > 0) {
@@ -178,14 +179,14 @@ void modulesSendSubnetReplies(void) {
 static void reportError(const char* subsystem, const char* message,
                          uint8_t src, uint8_t color) {
     if (hal_net_is_connected()) {
-        uint8_t tx_buf[AOG_MAX_FRAME];
-        size_t len = encodeAogHardwareMessage(tx_buf, sizeof(tx_buf),
+        uint8_t tx_buf[aog_frame::MAX_FRAME];
+        size_t len = pgnEncodeHardwareMessage(tx_buf, sizeof(tx_buf),
                                                src,
-                                               AOG_HWMSG_DURATION_PERSIST,
+                                               aog_hwmsg::DURATION_PERSIST,
                                                color,
                                                message);
         if (len > 0) {
-            hal_net_send(tx_buf, len, AOG_PORT_AGIO);
+            hal_net_send(tx_buf, len, aog_port::AGIO_SEND);
             hal_log("MODULES: UDP error sent – %s: %s", subsystem, message);
             return;
         }
@@ -210,31 +211,31 @@ void modulesSendStartupErrors(void) {
     // Ethernet
     if (!s_hw.eth_detected) {
         reportError("Ethernet", "ERR Ethernet: W5500 Not Detected",
-                    AOG_SRC_STEER, AOG_HWMSG_COLOR_RED);
+                    aog_src::STEER, aog_hwmsg::COLOR_RED);
     }
 
     // IMU
     if (!s_hw.imu_detected) {
         reportError("IMU", "ERR IMU (BNO085): Not Detected",
-                    AOG_SRC_STEER, AOG_HWMSG_COLOR_RED);
+                    aog_src::STEER, aog_hwmsg::COLOR_RED);
     }
 
     // Steer Angle Sensor
     if (!s_hw.was_detected) {
         reportError("SteerAngle", "ERR Steer Angle Sensor: Not Detected",
-                    AOG_SRC_STEER, AOG_HWMSG_COLOR_RED);
+                    aog_src::STEER, aog_hwmsg::COLOR_RED);
     }
 
     // Actuator
     if (!s_hw.actuator_detected) {
         reportError("Actuator", "ERR Actuator: Not Detected",
-                    AOG_SRC_STEER, AOG_HWMSG_COLOR_RED);
+                    aog_src::STEER, aog_hwmsg::COLOR_RED);
     }
 
     // Safety Circuit
     if (!s_hw.safety_ok) {
         reportError("Safety", "ERR Safety Circuit: KICK Engaged",
-                    AOG_SRC_STEER, AOG_HWMSG_COLOR_RED);
+                    aog_src::STEER, aog_hwmsg::COLOR_RED);
     }
 
     // --- Module-level summaries ---
@@ -245,7 +246,7 @@ void modulesSendStartupErrors(void) {
         char msg[64];
         std::snprintf(msg, sizeof(msg), "ERR Module %s: Not Available", s_modules[i].name);
         reportError(s_modules[i].name, msg,
-                    s_modules[i].src_id, AOG_HWMSG_COLOR_RED);
+                    s_modules[i].src_id, aog_hwmsg::COLOR_RED);
     }
 
     hal_log("MODULES: === Startup Error Report Complete (%s) ===",
