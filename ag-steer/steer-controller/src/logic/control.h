@@ -46,13 +46,18 @@ void controlInit(void);
 void controlStep(void);
 
 /// Update PID gains and actuator limits from AgIO steer settings (PGN 252).
-/// @param kp       proportional gain (raw, divide by 10 for actual)
-/// @param ki       integral gain (raw, divide by 10 for actual)
-/// @param kd       derivative gain (raw, divide by 10 for actual)
-/// @param minPWM   actuator minimum PWM
-/// @param maxPWM   actuator maximum PWM
-void controlUpdateSettings(uint8_t kp, uint8_t ki, uint8_t kd,
-                           uint16_t minPWM, uint16_t maxPWM);
+/// AgOpenGPS v5 sends: Kp(uint8), HighPWM(uint8), LowPWM(uint8),
+/// MinPWM(uint8), CountsPerDegree(uint8), WASOffset(int16), Ackerman(uint8).
+/// @param kp              proportional gain (raw)
+/// @param highPWM         maximum actuator PWM
+/// @param lowPWM          deadband / no-action PWM band
+/// @param minPWM          minimum actuator PWM for instant on
+/// @param countsPerDegree sensor counts per degree
+/// @param wasOffset       sensor zero offset (counts)
+/// @param ackerman        Ackerman correction factor (value / 100.0)
+void controlUpdateSettings(uint8_t kp, uint8_t highPWM, uint8_t lowPWM,
+                           uint8_t minPWM, uint8_t countsPerDegree,
+                           int16_t wasOffset, uint8_t ackerman);
 
 // ===================================================================
 // Globals

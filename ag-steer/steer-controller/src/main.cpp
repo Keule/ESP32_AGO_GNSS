@@ -263,16 +263,19 @@ void loop() {
     if (now - s_last_status >= 5000) {
         s_last_status = now;
         StateLock lock;
-        hal_log("STAT: hd=%.1f st=%.1f raw=%d safety=%s work=%s steer=%s pid=%d tgt=%.1f net=%s",
+        hal_log("STAT: hd=%.1f st=%.1f raw=%d safety=%s work=%s steer=%s spd=%.1f wdog=%s pid=%d tgt=%.1f net=%s cfg=%s",
                 g_nav.heading_deg,
                 g_nav.steer_angle_deg,
                 (int)g_nav.steer_angle_raw,
                 g_nav.safety_ok ? "OK" : "KICK",
                 g_nav.work_switch ? "ON" : "OFF",
                 g_nav.steer_switch ? "ON" : "OFF",
+                g_nav.gps_speed_kmh,
+                g_nav.watchdog_triggered ? "TRIG" : "OK",
                 (int)g_nav.pid_output,
                 desiredSteerAngleDeg,
-                hal_net_is_connected() ? "UP" : "DOWN");
+                hal_net_is_connected() ? "UP" : "DOWN",
+                g_nav.settings_received ? "Y" : "N");
     }
 
     vTaskDelay(pdMS_TO_TICKS(100));

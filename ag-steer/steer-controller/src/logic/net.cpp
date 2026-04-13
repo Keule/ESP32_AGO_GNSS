@@ -108,9 +108,15 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
                 // Decode status byte: work switch, steer switch, steer on
                 {
                     StateLock lock;
-                    g_nav.work_switch     = (msg.status & STATUS_BIT_WORK_SWITCH) != 0;
-                    g_nav.steer_switch    = (msg.status & STATUS_BIT_STEER_SWITCH) != 0;
+                    g_nav.work_switch      = (msg.status & STATUS_BIT_WORK_SWITCH) != 0;
+                    g_nav.steer_switch     = (msg.status & STATUS_BIT_STEER_SWITCH) != 0;
                     g_nav.last_status_byte = msg.status;
+
+                    // Store GPS speed for safety check [km/h]
+                    g_nav.gps_speed_kmh = msg.speed / 10.0f;
+
+                    // Reset watchdog – AgIO is alive
+                    g_nav.watchdog_timer_ms = hal_millis();
                 }
             }
             break;
@@ -133,38 +139,41 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
         case PGN_STEER_SETTINGS_IN: {
             AogSteerSettingsIn settings;
             if (tryDecodeAogSteerSettingsIn(payload, payload_len, &settings)) {
-                // Validate PGN bytes
-                if (settings.pgn1 == 0xFC && settings.pgn2 == 0xFC) {
-                    // Apply settings to control system
-                    controlUpdateSettings(settings.kp, settings.ki, settings.kd,
-                                         settings.minPWM, settings.maxPWM);
-
-                    // Store settings in global state
-                    {
-                        StateLock lock;
-                        g_nav.settings_ack       = settings.ackNumber;
-                        g_nav.settings_kp        = settings.kp / 10.0f;
-                        g_nav.settings_ki        = settings.ki / 10.0f;
-                        g_nav.settings_kd        = settings.kd / 10.0f;
-                        g_nav.settings_min_pwm   = settings.minPWM;
-                        g_nav.settings_max_pwm   = settings.maxPWM;
-                        g_nav.settings_counts    = settings.counts;
-                        g_nav.settings_hi        = settings.hiLimit;
-                        g_nav.settings_lo        = settings.loLimit;
-                        g_nav.settings_was_offset = settings.wasOffset;
-                        g_nav.settings_received  = true;
-                    }
-                } else {
-                    hal_log("NET: SteerSettings invalid PGN bytes (0x%02X 0x%02X)",
-                            (unsigned)settings.pgn1, (unsigned)settings.pgn2);
-                }
+                // Apply settings to PID controller
+                controlUpdateSettings(settings.kp, settings.highPWM, settings.lowPWM,
+                                     settings.minPWM, settings.countsPerDegree,
+                                     settings.wasOffset, settings.ackerman);
+                hal_log("NET: SteerSettings applied (Kp=%u hiPWM=%u loPWM=%u minPWM=%u cnt=%u off=%d ack=%u)",
+                        (unsigned)settings.kp, (unsigned)settings.highPWM,
+                        (unsigned)settings.lowPWM, (unsigned)settings.minPWM,
+                        (unsigned)settings.countsPerDegree, (int)settings.wasOffset,
+                        (unsigned)settings.ackerman);
             }
             break;
         }
 
-        case PGN_STEER_CONFIG_IN:
-            hal_log("NET: SteerConfig received (len=%zu) – TODO: implement", payload_len);
+        case PGN_STEER_CONFIG_IN: {
+            AogSteerConfigIn config;
+            if (tryDecodeAogSteerConfigIn(payload, payload_len, &config)) {
+                hal_log("NET: SteerConfig received (set0=0x%02X pulse=%u speed=%u ackFix=%u)",
+                        (unsigned)config.set0, (unsigned)config.maxPulse,
+                        (unsigned)config.minSpeed, (unsigned)config.ackermanFix);
+
+                // Store config in global state for future use
+                {
+                    StateLock lock;
+                    g_nav.config_set0      = config.set0;
+                    g_nav.config_max_pulse = config.maxPulse;
+                    g_nav.config_min_speed = config.minSpeed;
+                    g_nav.config_received  = true;
+                }
+
+                // TODO: apply hardware config bits (invert WAS, relay polarity,
+                // motor direction, Cytron driver mode, etc.)
+                // Reference does a hard reset after config – we log only for now.
+            }
             break;
+        }
 
         default: {
             // Rate-limit unhandled PGN logs (max once per 10s)

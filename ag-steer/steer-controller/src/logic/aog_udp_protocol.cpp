@@ -322,7 +322,8 @@ bool tryDecodeAogSteerDataIn(const uint8_t* payload, size_t payload_len,
 }
 
 // ===================================================================
-// Decoder: Steer Settings In (PGN 252, Len=17)
+// Decoder: Steer Settings In (PGN 252, Len=8)
+// AgOpenGPS v5: Kp, HighPWM, LowPWM, MinPWM, CountsPerDegree, WASOffset, Ackerman
 // ===================================================================
 bool tryDecodeAogSteerSettingsIn(const uint8_t* payload, size_t payload_len,
                                  AogSteerSettingsIn* out) {
@@ -332,11 +333,25 @@ bool tryDecodeAogSteerSettingsIn(const uint8_t* payload, size_t payload_len,
     std::memcpy(&msg, payload, sizeof(msg));
 
     if (out) *out = msg;
-    hal_log("AOG: SteerSettings ack=%u Kp=%u Ki=%u Kd=%u minPWM=%u maxPWM=%u counts=%u hi=%d lo=%d wasOff=%d width=%u",
-            (unsigned)msg.ackNumber, (unsigned)msg.kp, (unsigned)msg.ki, (unsigned)msg.kd,
-            (unsigned)msg.minPWM, (unsigned)msg.maxPWM, (unsigned)msg.counts,
-            (int)msg.hiLimit, (int)msg.loLimit, (int)msg.wasOffset,
-            (unsigned)msg.machineWidth);
+    hal_log("AOG: SteerSettings Kp=%u hiPWM=%u loPWM=%u minPWM=%u cnt=%u off=%d ack=%u",
+            (unsigned)msg.kp, (unsigned)msg.highPWM, (unsigned)msg.lowPWM,
+            (unsigned)msg.minPWM, (unsigned)msg.countsPerDegree,
+            (int)msg.wasOffset, (unsigned)msg.ackerman);
+    return true;
+}
+
+// ===================================================================
+// Decoder: Steer Config In (PGN 251, Len=8)
+// AgOpenGPS: Set0(config bits), MaxPulse, MinSpeed, AckermanFix, [4 reserved]
+// ===================================================================
+bool tryDecodeAogSteerConfigIn(const uint8_t* payload, size_t payload_len,
+                               AogSteerConfigIn* out) {
+    if (!payload || payload_len < sizeof(AogSteerConfigIn)) return false;
+
+    AogSteerConfigIn msg;
+    std::memcpy(&msg, payload, sizeof(msg));
+
+    if (out) *out = msg;
     return true;
 }
 

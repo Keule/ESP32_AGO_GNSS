@@ -3,7 +3,7 @@
  * @brief PID controller and control loop implementation.
  *
  * Runs at 200 Hz on Core 1.
- * Sequence: Safety -> IMU -> Steer Angle -> PID -> Actuator
+ * Sequence: Safety -> IMU -> Steer Angle -> Watchdog -> PID -> Actuator
  */
 
 #include "control.h"
@@ -14,6 +14,17 @@
 #include "hal/hal.h"
 
 #include <cmath>
+
+// ===================================================================
+// Constants
+// ===================================================================
+
+/// Watchdog: disable steering if no PGN 254 received for this many ms
+constexpr uint32_t WATCHDOG_TIMEOUT_MS = 2500;
+
+/// Minimum GPS speed [km/h] to allow auto-steering.
+/// Reference disables steering below 0.1 km/h for safety.
+constexpr float MIN_STEER_SPEED_KMH = 0.1f;
 
 // ===================================================================
 // Globals – actual definition in global_state.cpp
@@ -107,30 +118,49 @@ void controlInit(void) {
             s_steer_pid.kp, s_steer_pid.ki, s_steer_pid.kd);
 }
 
-void controlUpdateSettings(uint8_t kp, uint8_t ki, uint8_t kd,
-                           uint16_t minPWM, uint16_t maxPWM) {
-    // AgIO sends gains scaled by 10 (e.g., Kp=30 means 3.0)
-    float new_kp = kp / 10.0f;
-    float new_ki = ki / 10.0f;
-    float new_kd = kd / 10.0f;
+void controlUpdateSettings(uint8_t kp, uint8_t highPWM, uint8_t lowPWM,
+                           uint8_t minPWM, uint8_t countsPerDegree,
+                           int16_t wasOffset, uint8_t ackerman) {
+    // AgOpenGPS sends Kp as raw value (e.g. 30 = Kp 3.0)
+    float new_kp = kp;
+
+    // Reference applies: lowPWM = minPWM * 1.2 (overrides AgIO value)
+    uint8_t effective_lowPWM = static_cast<uint8_t>(minPWM * 1.2f);
+
+    float new_out_min = static_cast<float>(minPWM);
+    float new_out_max = static_cast<float>(highPWM);
 
     // Only update if values actually changed
-    if (new_kp != s_steer_pid.kp || new_ki != s_steer_pid.ki || new_kd != s_steer_pid.kd ||
-        minPWM != (uint16_t)s_steer_pid.output_min || maxPWM != (uint16_t)s_steer_pid.output_max) {
+    if (new_kp != s_steer_pid.kp ||
+        new_out_min != s_steer_pid.output_min ||
+        new_out_max != s_steer_pid.output_max) {
 
         s_steer_pid.kp = new_kp;
-        s_steer_pid.ki = new_ki;
-        s_steer_pid.kd = new_kd;
-        s_steer_pid.output_min = minPWM;
-        s_steer_pid.output_max = maxPWM;
+        s_steer_pid.output_min = new_out_min;
+        s_steer_pid.output_max = new_out_max;
 
         // Reset integral on gain change to prevent windup from old gains
         s_steer_pid.integral = 0.0f;
         s_steer_pid.prev_error = 0.0f;
         s_steer_pid.first_update = true;
 
-        hal_log("Control: settings updated Kp=%.1f Ki=%.1f Kd=%.1f minPWM=%u maxPWM=%u",
-                new_kp, new_ki, new_kd, (unsigned)minPWM, (unsigned)maxPWM);
+        hal_log("Control: settings updated Kp=%.0f hiPWM=%u loPWM=%u(eff=%u) minPWM=%u counts=%u ack=%u",
+                (float)kp, (unsigned)highPWM, (unsigned)lowPWM,
+                (unsigned)effective_lowPWM, (unsigned)minPWM,
+                (unsigned)countsPerDegree, (unsigned)ackerman);
+    }
+
+    // Store all settings in global state for status reporting
+    {
+        StateLock lock;
+        g_nav.settings_kp           = kp;
+        g_nav.settings_high_pwm     = highPWM;
+        g_nav.settings_low_pwm      = lowPWM;
+        g_nav.settings_min_pwm      = minPWM;
+        g_nav.settings_counts       = countsPerDegree;
+        g_nav.settings_was_offset   = wasOffset;
+        g_nav.settings_ackerman     = ackerman;
+        g_nav.settings_received     = true;
     }
 }
 
@@ -138,7 +168,7 @@ void controlStep(void) {
     uint32_t now_ms = hal_millis();
 
     // ----------------------------------------------------------
-    // 1. Safety check
+    // 1. Safety check (hardware safety circuit)
     // ----------------------------------------------------------
     bool safety = hal_safety_ok();
     {
@@ -195,7 +225,41 @@ void controlStep(void) {
     }
 
     // ----------------------------------------------------------
-    // 5. PID computation
+    // 5. Watchdog check: disable steering if AgIO stopped sending
+    // ----------------------------------------------------------
+    {
+        StateLock lock;
+        uint32_t elapsed = now_ms - g_nav.watchdog_timer_ms;
+        g_nav.watchdog_triggered = (elapsed > WATCHDOG_TIMEOUT_MS);
+    }
+
+    if (g_nav.watchdog_triggered) {
+        // AgIO heartbeat lost — disable steering for safety
+        pidReset(&s_steer_pid);
+        {
+            StateLock lock;
+            g_nav.pid_output = 0;
+        }
+        actuatorWriteCommand(0);
+        return;
+    }
+
+    // ----------------------------------------------------------
+    // 6. Speed safety check: don't steer below minimum speed
+    // ----------------------------------------------------------
+    {
+        StateLock lock;
+        if (g_nav.gps_speed_kmh < MIN_STEER_SPEED_KMH) {
+            // Vehicle is too slow or stationary — disable steering
+            pidReset(&s_steer_pid);
+            g_nav.pid_output = 0;
+            actuatorWriteCommand(0);
+            return;
+        }
+    }
+
+    // ----------------------------------------------------------
+    // 7. PID computation
     // ----------------------------------------------------------
     float setpoint = desiredSteerAngleDeg;
     float error = setpoint - current_angle;
@@ -211,13 +275,13 @@ void controlStep(void) {
     float output = pidCompute(&s_steer_pid, error, dt);
 
     // ----------------------------------------------------------
-    // 6. Write actuator command
+    // 8. Write actuator command
     // ----------------------------------------------------------
     uint16_t cmd = static_cast<uint16_t>(output);
     actuatorWriteCommand(cmd);
 
     // ----------------------------------------------------------
-    // 7. Update timestamp and PID output for status reporting
+    // 9. Update timestamp and PID output for status reporting
     // ----------------------------------------------------------
     {
         StateLock lock;

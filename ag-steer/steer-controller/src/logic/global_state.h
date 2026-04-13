@@ -44,17 +44,27 @@ struct NavigationState {
     uint8_t last_status_byte; // raw status byte from last PGN 254
 
     // --- Steering settings from AgIO (PGN 252) ---
-    uint8_t settings_ack;     // last ack number received (for tracking)
-    float   settings_kp;      // proportional gain from AgIO
-    float   settings_ki;      // integral gain from AgIO
-    float   settings_kd;      // derivative gain from AgIO
-    uint16_t settings_min_pwm;// actuator min PWM from AgIO
-    uint16_t settings_max_pwm;// actuator max PWM from AgIO
-    uint16_t settings_counts; // sensor total counts from AgIO
-    int8_t  settings_hi;      // angle limit left [degrees]
-    int8_t  settings_lo;      // angle limit right [degrees]
-    int16_t settings_was_offset; // sensor zero offset from AgIO
-    bool    settings_received; // true after first settings from AgIO
+    uint8_t  settings_kp;           // proportional gain from AgIO
+    uint8_t  settings_high_pwm;     // maximum actuator PWM from AgIO
+    uint8_t  settings_low_pwm;      // deadband PWM from AgIO
+    uint8_t  settings_min_pwm;      // minimum actuator PWM from AgIO
+    uint8_t  settings_counts;       // sensor counts per degree from AgIO
+    int16_t  settings_was_offset;   // sensor zero offset from AgIO
+    uint8_t  settings_ackerman;     // Ackerman correction factor from AgIO (*100)
+    bool     settings_received;     // true after first settings from AgIO
+
+    // --- Steering config from AgIO (PGN 251) ---
+    uint8_t  config_set0;           // hardware config bits from AgIO
+    uint8_t  config_max_pulse;      // pulse count max threshold
+    uint8_t  config_min_speed;      // minimum speed for steering
+    bool     config_received;       // true after first config from AgIO
+
+    // --- Watchdog (AgIO heartbeat) ---
+    uint32_t watchdog_timer_ms;     // ms since last valid PGN 254
+    bool     watchdog_triggered;     // true = no PGN 254 received for >2.5s
+
+    // --- Speed safety ---
+    float    gps_speed_kmh;          // current GPS speed [km/h] from PGN 254
 
     // --- PID output (for status reporting) ---
     uint16_t pid_output;      // current PID output (actuator command)

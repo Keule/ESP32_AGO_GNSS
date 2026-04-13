@@ -202,31 +202,72 @@ static_assert(sizeof(AogSteerDataIn) == 8, "AogSteerDataIn must be 8 bytes");
 
 // ===================================================================
 // Steer Settings In (PGN 252, Src=0x7F -> steer module)
-// "ACK" message from AgIO containing steering parameters.
-// Total payload: 17 bytes
+// AgIO sends steering parameters after hello exchange.
+// Total payload: 8 bytes
+//
+// Reference: AgOpenGPS CPGN_FC (Pgns.cs):
+//   Bytes = { 0x80, 0x81, 0x7F, 0xFC, 8, Kp, HiPWM, LoPWM, MinPWM, Counts, OffLo, OffHi, Ack, CRC }
+//
+// Field mapping (all values are raw bytes, no sub-packet headers):
+//   [0] Kp              – proportional gain (actual = value)
+//   [1] HighPWM         – maximum actuator PWM
+//   [2] LowPWM          – deadband / no-action band (ref overrides: lowPWM = minPWM * 1.2)
+//   [3] MinPWM          – minimum actuator PWM for instant on
+//   [4] CountsPerDegree – steer angle sensor counts per degree
+//   [5-6] wasOffset     – sensor zero offset (int16 LE)
+//   [7] Ackerman        – Ackerman correction (actual = value / 100.0)
 // ===================================================================
 
 struct __attribute__((packed)) AogSteerSettingsIn {
-    uint8_t  pgn1;            // = 0xFC (repeated PGN byte)
-    uint8_t  pgn2;            // = 0xFC (repeated PGN byte)
-    uint8_t  ackNumber;       // acknowledgment number (0-254, wraps)
-    uint8_t  kp;              // proportional gain (actual = value / 10.0)
-    uint8_t  ki;              // integral gain (actual = value / 10.0)
-    uint8_t  kd;              // derivative gain (actual = value / 10.0)
-    uint16_t minPWM;          // minimum actuator PWM, LE
-    uint16_t maxPWM;          // maximum actuator PWM, LE
-    uint16_t counts;          // steer angle sensor total counts, LE
-    int8_t   hiLimit;         // max steer angle to left [degrees]
-    int8_t   loLimit;         // max steer angle to right [degrees]
-    int16_t  wasOffset;       // sensor zero offset in counts, LE
-    uint8_t  machineWidth;    // implement width [cm]
+    uint8_t  kp;              // [0] proportional gain
+    uint8_t  highPWM;         // [1] maximum actuator PWM
+    uint8_t  lowPWM;          // [2] deadband (no-action PWM band)
+    uint8_t  minPWM;          // [3] minimum actuator PWM for instant on
+    uint8_t  countsPerDegree; // [4] steer angle sensor counts per degree
+    int16_t  wasOffset;       // [5-6] sensor zero offset (LE)
+    uint8_t  ackerman;        // [7] Ackerman correction factor (*100)
 };
 
-static_assert(sizeof(AogSteerSettingsIn) == 17, "AogSteerSettingsIn must be 17 bytes");
+static_assert(sizeof(AogSteerSettingsIn) == 8, "AogSteerSettingsIn must be 8 bytes");
+
+// ===================================================================
+// Steer Config In (PGN 251, Src=0x7F -> steer module)
+// AgIO sends hardware configuration bits.
+// Total payload: 8 bytes
+//
+// Reference: AgOpenGPS CPGN_FB (Pgns.cs):
+//   Bytes = { 0x80, 0x81, 0x7F, 0xFB, 8, Set0, MaxPulse, MinSpeed, AckFix, ?, ?, ?, ?, CRC }
+//
+// Set0 bitfield:
+//   bit 0: InvertWAS
+//   bit 1: RelayActiveHigh
+//   bit 2: MotorDriveDirection
+//   bit 3: SingleInputWAS
+//   bit 4: CytronDriver
+//   bit 5: SteerSwitch (has steer switch)
+//   bit 6: SteerButton (has steer button)
+//   bit 7: ShaftEncoder
+// ===================================================================
+
+struct __attribute__((packed)) AogSteerConfigIn {
+    uint8_t  set0;             // [0] configuration bits (see above)
+    uint8_t  maxPulse;         // [1] pulse count max threshold
+    uint8_t  minSpeed;         // [2] minimum speed for steering (unused in some versions)
+    uint8_t  ackermanFix;      // [3] Ackerman fix percentage
+    uint8_t  reserved[4];      // [4-7] spare bytes
+};
+
+static_assert(sizeof(AogSteerConfigIn) == 8, "AogSteerConfigIn must be 8 bytes");
 
 // ===================================================================
 // Steer Status Out (PGN 253, Src=0x7E -> AgIO)
 // Total payload: 8 bytes
+//
+// Switch status byte:
+//   bit 0: work switch
+//   bit 1: steer switch
+//   bit 2: (reserved in reference)
+//   bit 7: safety kick (custom extension – not in reference)
 // ===================================================================
 
 struct __attribute__((packed)) AogSteerStatusOut {
@@ -415,6 +456,10 @@ bool tryDecodeAogSteerDataIn(const uint8_t* payload, size_t payload_len,
 /// Try to decode Steer Settings In (PGN 252).
 bool tryDecodeAogSteerSettingsIn(const uint8_t* payload, size_t payload_len,
                                  AogSteerSettingsIn* out);
+
+/// Try to decode Steer Config In (PGN 251).
+bool tryDecodeAogSteerConfigIn(const uint8_t* payload, size_t payload_len,
+                               AogSteerConfigIn* out);
 
 /// Try to decode a Hardware Message (PGN 221).
 /// Fills out_duration, out_color, out_message (null-terminated).
