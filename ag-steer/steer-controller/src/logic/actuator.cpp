@@ -8,9 +8,14 @@
 #include "actuator.h"
 #include "hal/hal.h"
 
+#include "log_config.h"
+#define LOG_LOCAL_LEVEL LOG_LEVEL_ACT
+#include "esp_log.h"
+#include "log_ext.h"
+
 void actuatorInit(void) {
     hal_actuator_begin();
-    hal_log("Actuator: initialised (SPI stub)");
+    LOGI("ACT", "initialised (SPI stub)");
 }
 
 void actuatorWriteCommand(uint16_t cmd) {

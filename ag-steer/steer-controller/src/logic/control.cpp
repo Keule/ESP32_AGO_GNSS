@@ -13,6 +13,11 @@
 #include "global_state.h"
 #include "hal/hal.h"
 
+#include "log_config.h"
+#define LOG_LOCAL_LEVEL LOG_LEVEL_CTL
+#include "esp_log.h"
+#include "log_ext.h"
+
 #include <cmath>
 
 // ===================================================================
@@ -114,7 +119,7 @@ void controlInit(void) {
             65535.0f // max output
     );
 
-    hal_log("Control: initialised (PID Kp=%.2f Ki=%.3f Kd=%.3f)",
+    LOGI("CTL", "initialised (PID Kp=%.2f Ki=%.3f Kd=%.3f)",
             s_steer_pid.kp, s_steer_pid.ki, s_steer_pid.kd);
 }
 
@@ -144,7 +149,7 @@ void controlUpdateSettings(uint8_t kp, uint8_t highPWM, uint8_t lowPWM,
         s_steer_pid.prev_error = 0.0f;
         s_steer_pid.first_update = true;
 
-        hal_log("Control: settings updated Kp=%.0f hiPWM=%u loPWM=%u(eff=%u) minPWM=%u counts=%u ack=%u",
+        LOGI("CTL", "settings updated Kp=%.0f hiPWM=%u loPWM=%u(eff=%u) minPWM=%u counts=%u ack=%u",
                 (float)kp, (unsigned)highPWM, (unsigned)lowPWM,
                 (unsigned)effective_lowPWM, (unsigned)minPWM,
                 (unsigned)countsPerDegree, (unsigned)ackerman);

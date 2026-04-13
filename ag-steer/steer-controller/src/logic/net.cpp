@@ -29,6 +29,11 @@
 #include "global_state.h"
 #include "hal/hal.h"
 
+#include "log_config.h"
+#define LOG_LOCAL_LEVEL LOG_LEVEL_NET
+#include "esp_log.h"
+#include "log_ext.h"
+
 #include <cstring>
 
 // ===================================================================
@@ -58,8 +63,8 @@ AogNetworkConfig g_net_cfg;
 // ===================================================================
 void netInit(void) {
     hal_net_init();
-    hal_log("NET: initialised (W5500 Ethernet)");
-    hal_log("NET: dest IP = %u.%u.%u.%u",
+    LOGI("NET", "initialised (W5500 Ethernet)");
+    LOGI("NET", "dest IP = %u.%u.%u.%u",
             g_net_cfg.dest_ip[0], g_net_cfg.dest_ip[1],
             g_net_cfg.dest_ip[2], g_net_cfg.dest_ip[3]);
 }
@@ -78,7 +83,7 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
         case aog_pgn::HELLO_FROM_AGIO: {
             AogHelloFromAgio msg;
             if (pgnDecodeHelloFromAgio(payload, payload_len, &msg)) {
-                hal_log("NET: Hello from AgIO (module=0x%02X, ver=%u) -> sending ALL module hellos",
+                LOGI("NET", "Hello from AgIO (module=0x%02X, ver=%u) -> sending ALL module hellos",
                         (unsigned)msg.moduleId, (unsigned)msg.agioVersion);
                 modulesSendHellos();
             }
@@ -87,7 +92,7 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
 
         case aog_pgn::SCAN_REQUEST: {
             if (pgnDecodeScanRequest(payload, payload_len)) {
-                hal_log("NET: Scan request -> sending ALL module subnet replies");
+                LOGI("NET", "Scan request -> sending ALL module subnet replies");
                 modulesSendSubnetReplies();
             }
             break;
@@ -105,7 +110,7 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
                 // Also update the HAL's destination IP (used by hal_net_send)
                 hal_net_set_dest_ip(msg.ip_one, msg.ip_two, msg.ip_three, 255);
 
-                hal_log("NET: subnet changed, dest=%u.%u.%u.%u",
+                LOGI("NET", "subnet changed, dest=%u.%u.%u.%u",
                         g_net_cfg.dest_ip[0], g_net_cfg.dest_ip[1],
                         g_net_cfg.dest_ip[2], g_net_cfg.dest_ip[3]);
             }
@@ -142,7 +147,7 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
             if (pgnDecodeHardwareMessage(payload, payload_len,
                                          &dur, &color,
                                          msg_text, sizeof(msg_text))) {
-                hal_log("NET: HW message from AgIO: [%u] (col=%u) \"%s\"",
+                LOGI("NET", "HW message from AgIO: [%u] (col=%u) \"%s\"",
                         (unsigned)dur, (unsigned)color, msg_text);
                 // TODO: display on connected LCD, or process commands
             }
@@ -156,7 +161,7 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
                 controlUpdateSettings(settings.kp, settings.highPWM, settings.lowPWM,
                                      settings.minPWM, settings.countsPerDegree,
                                      settings.wasOffset, settings.ackerman);
-                hal_log("NET: SteerSettings applied (Kp=%u hiPWM=%u loPWM=%u minPWM=%u cnt=%u off=%d ack=%u)",
+                LOGI("NET", "SteerSettings applied (Kp=%u hiPWM=%u loPWM=%u minPWM=%u cnt=%u off=%d ack=%u)",
                         (unsigned)settings.kp, (unsigned)settings.highPWM,
                         (unsigned)settings.lowPWM, (unsigned)settings.minPWM,
                         (unsigned)settings.countsPerDegree, (int)settings.wasOffset,
@@ -168,7 +173,7 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
         case aog_pgn::STEER_CONFIG_IN: {
             AogSteerConfigIn config;
             if (pgnDecodeSteerConfigIn(payload, payload_len, &config)) {
-                hal_log("NET: SteerConfig received (set0=0x%02X pulse=%u speed=%u ackFix=%u)",
+                LOGI("NET", "SteerConfig received (set0=0x%02X pulse=%u speed=%u ackFix=%u)",
                         (unsigned)config.set0, (unsigned)config.maxPulse,
                         (unsigned)config.minSpeed, (unsigned)config.ackermanFix);
 
@@ -196,7 +201,7 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
 
                 // Use PGN registry to show human-readable name
                 const char* name = pgnGetName(pgn);
-                hal_log("NET: unhandled PGN 0x%02X (%s) from Src 0x%02X (len=%zu)",
+                LOGW("NET", "unhandled PGN 0x%02X (%s) from Src 0x%02X (len=%zu)",
                         pgn, name, src, payload_len);
             }
             break;
@@ -235,7 +240,7 @@ void netPollReceive(void) {
             uint32_t now = hal_millis();
             if (now - s_last_invalid_log_ms >= 10000) {
                 s_last_invalid_log_ms = now;
-                hal_log("NET: invalid frame (%d bytes from port %u, first=0x%02X)",
+                LOGW("NET", "invalid frame (%d bytes from port %u, first=0x%02X)",
                         rx_len, src_port, rx_buf[0]);
             }
         }

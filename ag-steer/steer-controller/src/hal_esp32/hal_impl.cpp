@@ -29,6 +29,10 @@
 #include "hal/hal.h"
 #include "hardware_pins.h"
 #include "logic/pgn_types.h"
+#include "logic/log_config.h"
+
+#define LOG_LOCAL_LEVEL LOG_LEVEL_HAL
+#include "esp_log.h"
 
 // ===================================================================
 // Arduino / ESP32 includes
@@ -103,11 +107,8 @@ static SemaphoreHandle_t s_mutex = nullptr;
 #endif
 
 // ===================================================================
-// Serial log mutex — protects USB CDC Serial from concurrent access
-// USB CDC (Serial on ESP32-S3) is NOT thread-safe and will crash
-// if two tasks call Serial.printf() simultaneously on different cores.
+// Log mutex removed — esp_log is thread-safe natively.
 // ===================================================================
-static SemaphoreHandle_t s_log_mutex = nullptr;
 
 // ===================================================================
 // Timing
@@ -125,7 +126,10 @@ void hal_delay_ms(uint32_t ms) {
 }
 
 // ===================================================================
-// Logging
+// Logging – delegates to esp_log (thread-safe, level-filtered).
+//
+// hal_log() is kept for ABI compatibility with logic/ modules.
+// New code should use LOGI/LOGD/LOGW/LOGE from log_ext.h directly.
 // ===================================================================
 void hal_log(const char* fmt, ...) {
     char buf[256];
@@ -133,18 +137,7 @@ void hal_log(const char* fmt, ...) {
     va_start(args, fmt);
     std::vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
-
-    // Protect Serial (USB CDC) from concurrent access across cores.
-    // Without this mutex, simultaneous hal_log() calls from different
-    // FreeRTOS tasks (e.g. loop on Core 1 + commTask on Core 0) cause
-    // a LoadProhibited panic in the USB CDC driver internals.
-    if (s_log_mutex) {
-        xSemaphoreTake(s_log_mutex, portMAX_DELAY);
-    }
-    Serial.printf("[%10lu] %s\n", millis(), buf);
-    if (s_log_mutex) {
-        xSemaphoreGive(s_log_mutex);
-    }
+    ESP_LOGI("HAL", "%s", buf);
 }
 
 // ===================================================================
@@ -158,8 +151,6 @@ void hal_mutex_init(void) {
     s_mutex = xSemaphoreCreateRecursiveMutex();
 #endif
 
-    // Serial log mutex (binary, protects USB CDC from concurrent access)
-    s_log_mutex = xSemaphoreCreateMutex();
 }
 
 void hal_mutex_lock(void) {

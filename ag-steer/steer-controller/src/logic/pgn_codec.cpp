@@ -10,6 +10,11 @@
 #include "global_state.h"
 #include "hal/hal.h"
 
+#include "log_config.h"
+#define LOG_LOCAL_LEVEL LOG_LEVEL_PGN
+#include "esp_log.h"
+#include "log_ext.h"
+
 #include <cstdio>
 #include <cstring>
 
@@ -41,7 +46,7 @@ size_t pgnBuildFrame(uint8_t* buf, size_t buf_size,
                      const void* payload, size_t payload_len) {
     size_t total = aog_frame::HEADER_SIZE + payload_len + aog_frame::CRC_SIZE;
     if (buf_size < total) {
-        hal_log("PGN: frame buffer too small: need %zu, have %zu", total, buf_size);
+        LOGE("PGN", "frame buffer too small: need %zu, have %zu", total, buf_size);
         return 0;
     }
 
@@ -102,7 +107,7 @@ bool pgnValidateFrame(const uint8_t* frame, size_t frame_len,
             for (size_t i = 0; i < frame_len && (p - hexbuf) < static_cast<int>(sizeof(hexbuf)) - 4; i++) {
                 p += snprintf(p, 4, "%02X ", frame[i]);
             }
-            hal_log("PGN: CRC mismatch: got 0x%02X, exp 0x%02X (Src=%u PGN=0x%02X) [%s]",
+            LOGE("PGN", "CRC mismatch: got 0x%02X, exp 0x%02X (Src=%u PGN=0x%02X) [%s]",
                     frame[crc_idx], expected_crc, src, pgn, hexbuf);
         }
         return false;
@@ -300,7 +305,7 @@ bool pgnDecodeHelloFromAgio(const uint8_t* payload, size_t payload_len,
     std::memcpy(&msg, payload, sizeof(msg));
 
     if (out) *out = msg;
-    hal_log("PGN: Hello from AgIO (module=%u, ver=%u)",
+    LOGI("PGN", "Hello from AgIO (module=%u, ver=%u)",
             (unsigned)msg.moduleId, (unsigned)msg.agioVersion);
     return true;
 }
@@ -310,7 +315,7 @@ bool pgnDecodeHelloFromAgio(const uint8_t* payload, size_t payload_len,
 // ===================================================================
 bool pgnDecodeScanRequest(const uint8_t* payload, size_t payload_len) {
     if (!payload || payload_len < 1) return false;
-    hal_log("PGN: Scan request received (len=%zu)", payload_len);
+    LOGI("PGN", "Scan request received (len=%zu)", payload_len);
     return true;
 }
 
@@ -325,7 +330,7 @@ bool pgnDecodeSubnetChange(const uint8_t* payload, size_t payload_len,
     std::memcpy(&msg, payload, sizeof(msg));
 
     if (out) *out = msg;
-    hal_log("PGN: Subnet change -> IP=%u.%u.%u.xxx",
+    LOGI("PGN", "Subnet change -> IP=%u.%u.%u.xxx",
             (unsigned)msg.ip_one, (unsigned)msg.ip_two, (unsigned)msg.ip_three);
     return true;
 }
@@ -341,7 +346,7 @@ bool pgnDecodeSteerDataIn(const uint8_t* payload, size_t payload_len,
     std::memcpy(&msg, payload, sizeof(msg));
 
     if (out) *out = msg;
-    hal_log("PGN: SteerDataIn speed=%d angle=%d status=0x%02X",
+    LOGI("PGN", "SteerDataIn speed=%d angle=%d status=0x%02X",
             (int)msg.speed, (int)msg.steerAngle, (int)msg.status);
     return true;
 }
@@ -357,7 +362,7 @@ bool pgnDecodeSteerSettingsIn(const uint8_t* payload, size_t payload_len,
     std::memcpy(&msg, payload, sizeof(msg));
 
     if (out) *out = msg;
-    hal_log("PGN: SteerSettings Kp=%u hiPWM=%u loPWM=%u minPWM=%u cnt=%u off=%d ack=%u",
+    LOGI("PGN", "SteerSettings Kp=%u hiPWM=%u loPWM=%u minPWM=%u cnt=%u off=%d ack=%u",
             (unsigned)msg.kp, (unsigned)msg.highPWM, (unsigned)msg.lowPWM,
             (unsigned)msg.minPWM, (unsigned)msg.countsPerDegree,
             (int)msg.wasOffset, (unsigned)msg.ackerman);
@@ -389,7 +394,7 @@ bool pgnDecodeMachineDataIn(const uint8_t* payload, size_t payload_len,
     std::memcpy(&msg, payload, sizeof(msg));
 
     if (out) *out = msg;
-    hal_log("PGN: MachineData speed=%u", (unsigned)msg.speed);
+    LOGI("PGN", "MachineData speed=%u", (unsigned)msg.speed);
     return true;
 }
 
@@ -404,7 +409,7 @@ bool pgnDecodeMachineConfigIn(const uint8_t* payload, size_t payload_len,
     std::memcpy(&msg, payload, sizeof(msg));
 
     if (out) *out = msg;
-    hal_log("PGN: MachineConfig raise=%u lower=%u hyd=%u",
+    LOGI("PGN", "MachineConfig raise=%u lower=%u hyd=%u",
             (unsigned)msg.raiseTime, (unsigned)msg.lowerTime, (unsigned)msg.enableHyd);
     return true;
 }
@@ -441,7 +446,7 @@ bool pgnDecodeHardwareMessage(const uint8_t* payload, size_t payload_len,
         out_message[copy_len] = '\0';
     }
 
-    hal_log("PGN: HW Message dur=%u color=%u msg=\"%s\"", duration, color, msg);
+    LOGI("PGN", "HW Message dur=%u color=%u msg=\"%s\"", duration, color, msg);
     return true;
 }
 
@@ -449,7 +454,7 @@ bool pgnDecodeHardwareMessage(const uint8_t* payload, size_t payload_len,
 // Utility: Hex dump to log
 // ===================================================================
 void pgnHexDump(const char* label, const uint8_t* data, size_t len) {
-    hal_log("%s (%zu bytes):", label ? label : "PGN dump", len);
+    LOGI("PGN", "%s (%zu bytes):", label ? label : "PGN dump", len);
     for (size_t i = 0; i < len; i += 16) {
         char line[80];
         int pos = 0;
@@ -457,6 +462,6 @@ void pgnHexDump(const char* label, const uint8_t* data, size_t len) {
         for (size_t j = i; j < i + 16 && j < len; j++) {
             pos += snprintf(line + pos, sizeof(line) - pos, "%02X ", data[j]);
         }
-        hal_log("%s", line);
+        LOGI("PGN", "%s", line);
     }
 }

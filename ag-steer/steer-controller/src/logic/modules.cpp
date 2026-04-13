@@ -21,6 +21,11 @@
 #include "global_state.h"
 #include "hal/hal.h"
 
+#include "log_config.h"
+#define LOG_LOCAL_LEVEL LOG_LEVEL_MOD
+#include "esp_log.h"
+#include "log_ext.h"
+
 #include <cstdio>
 #include <cstring>
 
@@ -47,13 +52,13 @@ static bool s_startup_errors_sent = false;
 // Init – detect all hardware
 // ===================================================================
 void modulesInit(void) {
-    hal_log("MODULES: === Hardware Detection ===");
+    LOGI("MOD", "=== Hardware Detection ===");
 
     // --- Detect individual subsystems ---
 
     // Ethernet
     s_hw.eth_detected = hal_net_detected();
-    hal_log("MODULES: Ethernet (W5500)    : %s", s_hw.eth_detected ? "OK" : "FAIL");
+    LOGI("MOD", "Ethernet (W5500)    : %s", s_hw.eth_detected ? "OK" : "FAIL");
 
     // Steer Angle Sensor (ADS1118) – detect BEFORE IMU!
     // The ADS1118 holds DOUT LOW while converting, which would
@@ -69,7 +74,7 @@ void modulesInit(void) {
 
     // Safety circuit
     s_hw.safety_ok = hal_safety_ok();
-    hal_log("MODULES: Safety Circuit       : %s", s_hw.safety_ok ? "OK" : "KICK");
+    LOGI("MOD", "Safety Circuit       : %s", s_hw.safety_ok ? "OK" : "KICK");
 
     // --- Derive module hw_detected from subsystems ---
 
@@ -81,9 +86,9 @@ void modulesInit(void) {
         s_hw.safety_ok;
 
     // --- Log module summary ---
-    hal_log("MODULES: === Module Summary ===");
+    LOGI("MOD", "=== Module Summary ===");
     for (uint8_t i = 0; i < AOG_MOD_COUNT; i++) {
-        hal_log("MODULES:   [%u] %s (Src=0x%02X, Port=%u) enabled=%s hw=%s",
+        LOGI("MOD", "  [%u] %s (Src=0x%02X, Port=%u) enabled=%s hw=%s",
                 (unsigned)i,
                 s_modules[i].name,
                 s_modules[i].src_id,
@@ -91,7 +96,7 @@ void modulesInit(void) {
                 s_modules[i].enabled ? "Y" : "N",
                 s_modules[i].hw_detected ? "OK" : "FAIL");
     }
-    hal_log("MODULES: === Detection Complete ===");
+    LOGI("MOD", "=== Detection Complete ===");
 }
 
 // ===================================================================
@@ -145,7 +150,7 @@ void modulesSendHellos(void) {
         if (len > 0) {
             hal_net_send(buf, len, mod.port);
             pgnHexDump(label, buf, len);
-            hal_log("MODULE: sent %s hello reply (%zu bytes, src=0x%02X, port=%u)",
+            LOGI("MOD", "sent %s hello reply (%zu bytes, src=0x%02X, port=%u)",
                     mod.name, len, mod.src_id, (unsigned)mod.port);
         }
     }
@@ -166,7 +171,7 @@ void modulesSendSubnetReplies(void) {
                                            s_module_ip, s_module_subnet);
         if (len > 0) {
             hal_net_send(buf, len, mod.port);
-            hal_log("MODULE: sent %s subnet reply (src=0x%02X, port=%u)",
+            LOGI("MOD", "sent %s subnet reply (src=0x%02X, port=%u)",
                     mod.name, mod.src_id, (unsigned)mod.port);
         }
     }
@@ -187,12 +192,12 @@ static void reportError(const char* subsystem, const char* message,
                                                message);
         if (len > 0) {
             hal_net_send(tx_buf, len, aog_port::AGIO_SEND);
-            hal_log("MODULES: UDP error sent – %s: %s", subsystem, message);
+            LOGI("MOD", "UDP error sent – %s: %s", subsystem, message);
             return;
         }
     }
     // Fallback: Serial only
-    hal_log("MODULES: [SERIAL] %s: %s  (network not available)", subsystem, message);
+    LOGI("MOD", "[SERIAL] %s: %s  (network not available)", subsystem, message);
 }
 
 // ===================================================================
@@ -202,7 +207,7 @@ void modulesSendStartupErrors(void) {
     if (s_startup_errors_sent) return;
     s_startup_errors_sent = true;
 
-    hal_log("MODULES: === Startup Error Report ===");
+    LOGI("MOD", "=== Startup Error Report ===");
 
     // --- Check each subsystem and report if failed ---
     // If network is up, errors go via UDP (PGN 0xDD) to AgIO.
@@ -249,7 +254,7 @@ void modulesSendStartupErrors(void) {
                     s_modules[i].src_id, aog_hwmsg::COLOR_RED);
     }
 
-    hal_log("MODULES: === Startup Error Report Complete (%s) ===",
+    LOGI("MOD", "=== Startup Error Report Complete (%s) ===",
             hal_net_is_connected() ? "UDP" : "Serial only");
 }
 
@@ -262,9 +267,9 @@ void modulesUpdateStatus(void) {
     if (current_safety != s_hw.safety_ok) {
         s_hw.safety_ok = current_safety;
         if (!current_safety) {
-            hal_log("MODULES: Safety circuit KICK detected!");
+            LOGW("MOD", "Safety circuit KICK detected!");
         } else {
-            hal_log("MODULES: Safety circuit restored");
+            LOGI("MOD", "Safety circuit restored");
         }
     }
 }

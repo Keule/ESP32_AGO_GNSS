@@ -20,6 +20,11 @@
 #include "hardware_pins.h"
 #include "logic/sd_ota.h"
 
+#include "logic/log_config.h"
+#define LOG_LOCAL_LEVEL LOG_LEVEL_OTA
+#include "esp_log.h"
+#include "logic/log_ext.h"
+
 // ESP32 / Arduino includes
 #include <Arduino.h>
 #include <SPI.h>
@@ -83,12 +88,12 @@ static bool readVersionFromFile(fs::File& file, char* buf, size_t max_len) {
 static bool verifyOtaSupported(void) {
     const esp_partition_t* running = esp_ota_get_running_partition();
     if (!running) {
-        hal_log("OTA: ERROR – cannot determine running partition");
+        LOGE("OTA", "cannot determine running partition");
         return false;
     }
 
     if (running->type != ESP_PARTITION_TYPE_APP) {
-        hal_log("OTA: ERROR – running partition is not an APP partition (type=%u)",
+        LOGE("OTA", "running partition is not an APP partition (type=%u)",
                 running->type);
         return false;
     }
@@ -97,14 +102,14 @@ static bool verifyOtaSupported(void) {
     // Factory = 0x00, Test = 0x20
     if (running->subtype < ESP_PARTITION_SUBTYPE_APP_OTA_0 ||
         running->subtype > ESP_PARTITION_SUBTYPE_APP_OTA_MAX) {
-        hal_log("OTA: WARNING – not booted from an OTA slot (subtype=0x%02X). "
+        LOGW("OTA", "not booted from an OTA slot (subtype=0x%02X). "
                 "Partition table may not support OTA. Continuing anyway...",
                 running->subtype);
         // Don't hard-fail here – the Update library can handle it
         // if otadata partition exists.
     }
 
-    hal_log("OTA: running from partition '%s' (0x%06X, subtype=0x%02X)",
+    LOGI("OTA", "running from partition '%s' (0x%06X, subtype=0x%02X)",
             running->label, running->address, running->subtype);
     return true;
 }
@@ -119,7 +124,7 @@ static bool verifyOtaSupported(void) {
  * @return false if no file, same version, or SD error.
  */
 bool isFirmwareUpdateAvailableOnSD(void) {
-    hal_log("OTA: checking for firmware update on SD card...");
+    LOGI("OTA", "checking for firmware update on SD card...");
 
     // 1. Verify OTA partition support
     if (!verifyOtaSupported()) {
@@ -136,12 +141,12 @@ bool isFirmwareUpdateAvailableOnSD(void) {
 
     // 4. Mount SD card
     if (!SD.begin(SD_CS, sdSPI, 4000000, "/sd", 5)) {
-        hal_log("OTA: SD card init FAILED – no card inserted or bad contact?");
+        LOGE("OTA", "SD card init FAILED – no card inserted or bad contact?");
         sdSPI.end();
         hal_sensor_spi_reinit();
         return false;
     }
-    hal_log("OTA: SD card mounted OK");
+    LOGI("OTA", "SD card mounted OK");
 
     bool result = false;
     const char* found_file = nullptr;
@@ -154,7 +159,7 @@ bool isFirmwareUpdateAvailableOnSD(void) {
     }
 
     if (!found_file) {
-        hal_log("OTA: no firmware file found (checked %s and %s)",
+        LOGI("OTA", "no firmware file found (checked %s and %s)",
                 SD_FW_FILE_PRIMARY, SD_FW_FILE_ALT);
         goto cleanup;
     }
@@ -163,16 +168,16 @@ bool isFirmwareUpdateAvailableOnSD(void) {
     {
         fs::File fwFile = SD.open(found_file, "r");
         if (!fwFile) {
-            hal_log("OTA: ERROR – cannot open %s", found_file);
+            LOGE("OTA", "cannot open %s", found_file);
             goto cleanup;
         }
 
         size_t file_size = fwFile.size();
-        hal_log("OTA: found %s (%u bytes)", found_file, (unsigned)file_size);
+        LOGI("OTA", "found %s (%u bytes)", found_file, (unsigned)file_size);
         fwFile.close();
 
         if (file_size == 0 || file_size > MAX_FW_SIZE) {
-            hal_log("OTA: file size invalid (0 or > %u bytes), skipping",
+            LOGW("OTA", "file size invalid (0 or > %u bytes), skipping",
                     (unsigned)MAX_FW_SIZE);
             goto cleanup;
         }
@@ -189,18 +194,18 @@ bool isFirmwareUpdateAvailableOnSD(void) {
                     SdOtaVersion cur_ver = sdOtaGetCurrentVersion();
                     int cmp = sdOtaCompareVersion(&sd_ver, &cur_ver);
 
-                    hal_log("OTA: SD version = %u.%u.%u, current version = %u.%u.%u  (%s)",
+                    LOGI("OTA", "SD version = %u.%u.%u, current version = %u.%u.%u  (%s)",
                             sd_ver.major, sd_ver.minor, sd_ver.patch,
                             cur_ver.major, cur_ver.minor, cur_ver.patch,
                             cmp > 0 ? "NEWER" : cmp == 0 ? "SAME" : "OLDER");
 
                     if (cmp <= 0) {
-                        hal_log("OTA: firmware on SD is not newer, skipping update");
+                        LOGI("OTA", "firmware on SD is not newer, skipping update");
                         verFile.close();
                         goto cleanup;
                     }
                 } else {
-                    hal_log("OTA: WARNING – cannot parse version '%s', skipping version check",
+                    LOGW("OTA", "cannot parse version '%s', skipping version check",
                             ver_str);
                     // If version file is malformed, proceed without version check
                     // (user might have placed a file without version info)
@@ -209,12 +214,12 @@ bool isFirmwareUpdateAvailableOnSD(void) {
             verFile.close();
         }
     } else {
-        hal_log("OTA: no %s file, skipping version check", SD_FW_VERSION_FILE);
+        LOGI("OTA", "no %s file, skipping version check", SD_FW_VERSION_FILE);
     }
 
     // 8. All checks passed
     result = true;
-    hal_log("OTA: firmware update available on SD card");
+    LOGI("OTA", "firmware update available on SD card");
 
 cleanup:
     // 9. Unmount SD card and release SPI
@@ -241,12 +246,12 @@ cleanup:
  * @return false on any error (old firmware kept).
  */
 bool updateFirmwareFromSD(void) {
-    hal_log("OTA: ===== STARTING FIRMWARE UPDATE FROM SD =====");
+    LOGI("OTA", "===== STARTING FIRMWARE UPDATE FROM SD =====");
 
     // -----------------------------------------------------------------
     // Phase 1: Prepare – release sensor SPI, init SD card
     // -----------------------------------------------------------------
-    hal_log("OTA: phase 1 – releasing sensor SPI bus...");
+    LOGI("OTA", "phase 1 – releasing sensor SPI bus...");
     hal_sensor_spi_deinit();
     hal_delay_ms(10);
 
@@ -254,17 +259,17 @@ bool updateFirmwareFromSD(void) {
     sdSPI.begin(SD_SPI_SCK, SD_SPI_MISO, SD_SPI_MOSI, SD_CS);
 
     if (!SD.begin(SD_CS, sdSPI, 4000000, "/sd", 5)) {
-        hal_log("OTA: FATAL – SD card init FAILED");
+        LOGE("OTA", "FATAL – SD card init FAILED");
         sdSPI.end();
         hal_sensor_spi_reinit();
         return false;
     }
-    hal_log("OTA: SD card mounted OK");
+    LOGI("OTA", "SD card mounted OK");
 
     // -----------------------------------------------------------------
     // Phase 2: Open firmware file
     // -----------------------------------------------------------------
-    hal_log("OTA: phase 2 – opening firmware file...");
+    LOGI("OTA", "phase 2 – opening firmware file...");
 
     const char* fw_path = nullptr;
     if (SD.exists(SD_FW_FILE_PRIMARY)) {
@@ -272,7 +277,7 @@ bool updateFirmwareFromSD(void) {
     } else if (SD.exists(SD_FW_FILE_ALT)) {
         fw_path = SD_FW_FILE_ALT;
     } else {
-        hal_log("OTA: FATAL – no firmware file found (%s / %s)",
+        LOGE("OTA", "FATAL – no firmware file found (%s / %s)",
                 SD_FW_FILE_PRIMARY, SD_FW_FILE_ALT);
         SD.end();
         sdSPI.end();
@@ -282,7 +287,7 @@ bool updateFirmwareFromSD(void) {
 
     fs::File fwFile = SD.open(fw_path, "r");
     if (!fwFile) {
-        hal_log("OTA: FATAL – cannot open %s", fw_path);
+        LOGE("OTA", "FATAL – cannot open %s", fw_path);
         SD.end();
         sdSPI.end();
         hal_sensor_spi_reinit();
@@ -290,10 +295,10 @@ bool updateFirmwareFromSD(void) {
     }
 
     size_t file_size = fwFile.size();
-    hal_log("OTA: %s opened, size = %u bytes", fw_path, (unsigned)file_size);
+    LOGI("OTA", "%s opened, size = %u bytes", fw_path, (unsigned)file_size);
 
     if (file_size == 0) {
-        hal_log("OTA: FATAL – firmware file is EMPTY");
+        LOGE("OTA", "FATAL – firmware file is EMPTY");
         fwFile.close();
         SD.end();
         sdSPI.end();
@@ -302,7 +307,7 @@ bool updateFirmwareFromSD(void) {
     }
 
     if (file_size > MAX_FW_SIZE) {
-        hal_log("OTA: FATAL – firmware file too large (%u > %u bytes)",
+        LOGE("OTA", "FATAL – firmware file too large (%u > %u bytes)",
                 (unsigned)file_size, (unsigned)MAX_FW_SIZE);
         fwFile.close();
         SD.end();
@@ -314,10 +319,10 @@ bool updateFirmwareFromSD(void) {
     // -----------------------------------------------------------------
     // Phase 3: Begin OTA write
     // -----------------------------------------------------------------
-    hal_log("OTA: phase 3 – starting OTA write to flash...");
+    LOGI("OTA", "phase 3 – starting OTA write to flash...");
 
     if (!Update.begin(file_size)) {
-        hal_log("OTA: FATAL – Update.begin(%u) failed: error=%d '%s'",
+        LOGE("OTA", "FATAL – Update.begin(%u) failed: error=%d '%s'",
                 (unsigned)file_size, Update.getError(),
                 Update.errorString());
         fwFile.close();
@@ -328,16 +333,16 @@ bool updateFirmwareFromSD(void) {
         return false;
     }
 
-    hal_log("OTA: OTA partition initialised (%u bytes)", (unsigned)file_size);
+    LOGI("OTA", "OTA partition initialised (%u bytes)", (unsigned)file_size);
 
     // -----------------------------------------------------------------
     // Phase 4: Blockwise copy SD → Flash
     // -----------------------------------------------------------------
-    hal_log("OTA: phase 4 – writing firmware to flash...");
+    LOGI("OTA", "phase 4 – writing firmware to flash...");
 
     uint8_t* block_buf = (uint8_t*)malloc(OTA_BLOCK_SIZE);
     if (!block_buf) {
-        hal_log("OTA: FATAL – cannot allocate %u-byte read buffer",
+        LOGE("OTA", "FATAL – cannot allocate %u-byte read buffer",
                 (unsigned)OTA_BLOCK_SIZE);
         fwFile.close();
         Update.abort();
@@ -359,7 +364,7 @@ bool updateFirmwareFromSD(void) {
 
         int bytes_read = fwFile.read(block_buf, to_read);
         if (bytes_read <= 0) {
-            hal_log("OTA: ERROR – SD read failed at offset %u (read returned %d)",
+            LOGE("OTA", "SD read failed at offset %u (read returned %d)",
                     (unsigned)bytes_written, bytes_read);
             write_error = true;
             break;
@@ -368,7 +373,7 @@ bool updateFirmwareFromSD(void) {
         // Write block to OTA partition
         size_t written = Update.write(block_buf, bytes_read);
         if (written != static_cast<size_t>(bytes_read)) {
-            hal_log("OTA: ERROR – flash write failed at offset %u (wrote %u, expected %u, error=%d)",
+            LOGE("OTA", "flash write failed at offset %u (wrote %u, expected %u, error=%d)",
                     (unsigned)bytes_written, (unsigned)written,
                     (unsigned)bytes_read, Update.getError());
             write_error = true;
@@ -382,7 +387,7 @@ bool updateFirmwareFromSD(void) {
         if (pct != last_progress_pct && (pct % 10 == 0 || pct == 100)) {
             uint32_t elapsed = millis() - t_start;
             uint32_t bps = (elapsed > 0) ? (bytes_written * 1000 / elapsed) : 0;
-            hal_log("OTA: %3u%%  (%u / %u bytes, %u KB/s)",
+            LOGI("OTA", "%3u%%  (%u / %u bytes, %u KB/s)",
                     (unsigned)pct,
                     (unsigned)bytes_written, (unsigned)file_size,
                     (unsigned)(bps / 1024));
@@ -401,7 +406,7 @@ bool updateFirmwareFromSD(void) {
     // Phase 5: Finalise or abort
     // -----------------------------------------------------------------
     if (write_error) {
-        hal_log("OTA: ABORTING – error during write, keeping old firmware");
+        LOGE("OTA", "ABORTING – error during write, keeping old firmware");
         Update.abort();
         SD.end();
         sdSPI.end();
@@ -409,12 +414,12 @@ bool updateFirmwareFromSD(void) {
         return false;
     }
 
-    hal_log("OTA: phase 5 – validating and finalising...");
+    LOGI("OTA", "phase 5 – validating and finalising...");
 
     // Validate: Update.end(true) verifies the image and sets the OTA boot flag.
     // On success, the ESP32 will boot into the new firmware on next restart.
     if (!Update.end(true)) {
-        hal_log("OTA: FATAL – Update.end() FAILED: error=%d '%s'",
+        LOGE("OTA", "FATAL – Update.end() FAILED: error=%d '%s'",
                 Update.getError(), Update.errorString());
         Update.abort();
         SD.end();
@@ -427,11 +432,11 @@ bool updateFirmwareFromSD(void) {
     // Phase 6: Success – report and reboot
     // -----------------------------------------------------------------
     uint32_t total_time = millis() - t_start;
-    hal_log("OTA: ===== UPDATE SUCCESSFUL =====");
-    hal_log("OTA: wrote %u bytes in %u ms (%u KB/s)",
+    LOGI("OTA", "===== UPDATE SUCCESSFUL =====");
+    LOGI("OTA", "wrote %u bytes in %u ms (%u KB/s)",
             (unsigned)bytes_written, (unsigned)total_time,
             (unsigned)(bytes_written * 1000 / total_time / 1024));
-    hal_log("OTA: rebooting into new firmware in 2 seconds...");
+    LOGI("OTA", "rebooting into new firmware in 2 seconds...");
 
     // Clean up SD card resources (best-effort – we're rebooting anyway)
     SD.end();
@@ -440,7 +445,7 @@ bool updateFirmwareFromSD(void) {
     // Wait to let the log messages flush via Serial
     hal_delay_ms(2000);
 
-    hal_log("OTA: RESTARTING NOW");
+    LOGI("OTA", "RESTARTING NOW");
     Serial.flush();
     ESP.restart();
 

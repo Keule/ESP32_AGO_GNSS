@@ -10,9 +10,14 @@
 #include "global_state.h"
 #include "hal/hal.h"
 
+#include "log_config.h"
+#define LOG_LOCAL_LEVEL LOG_LEVEL_IMU
+#include "esp_log.h"
+#include "log_ext.h"
+
 void imuInit(void) {
     hal_imu_begin();
-    hal_log("IMU: initialised (BNO085 SPI stub)");
+    LOGI("IMU", "initialised (BNO085 SPI stub)");
 }
 
 bool imuUpdate(void) {

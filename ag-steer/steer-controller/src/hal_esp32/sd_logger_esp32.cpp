@@ -29,6 +29,11 @@
 #include "logic/sd_logger.h"
 #include "logic/global_state.h"
 
+#include "logic/log_config.h"
+#define LOG_LOCAL_LEVEL LOG_LEVEL_SDL
+#include "esp_log.h"
+#include "logic/log_ext.h"
+
 // ESP32 / Arduino includes
 #include <Arduino.h>
 #include <SPI.h>
@@ -156,7 +161,7 @@ static bool openLogFile(void) {
     s_log_file = SD.open(path, FILE_WRITE);
 
     if (!s_log_file) {
-        hal_log("LOGGER: ERROR – cannot create %s", path);
+        LOGE("SDL", "ERROR – cannot create %s", path);
         return false;
     }
 
@@ -165,7 +170,7 @@ static bool openLogFile(void) {
                        "yaw_rate_dps,roll_deg,safety_ok");
     s_log_file.flush();
 
-    hal_log("LOGGER: opened %s", path);
+    LOGI("SDL", "opened %s", path);
     return true;
 }
 
@@ -252,7 +257,7 @@ static void sdBusRelease(void) {
  */
 static void loggerTaskFunc(void* param) {
     (void)param;
-    hal_log("LOGGER: task started on core %d (priority=lowest)", xPortGetCoreID());
+    LOGI("SDL", "task started on core %d (priority=lowest)", xPortGetCoreID());
 
     bool was_active = false;
     uint32_t last_switch_change_ms = 0;
@@ -273,7 +278,7 @@ static void loggerTaskFunc(void* param) {
         // State machine: switch ON -> start logging, switch OFF -> stop
         if (switch_debounced && !was_active) {
             // --- TRANSITION: OFF -> ON ---
-            hal_log("LOGGER: switch ON – starting logging session");
+            LOGI("SDL", "switch ON – starting logging session");
 
             sdBusClaim();
 
@@ -282,14 +287,14 @@ static void loggerTaskFunc(void* param) {
             sdSPI.begin(SD_SPI_SCK, SD_SPI_MISO, SD_SPI_MOSI, SD_CS);
 
             if (SD.begin(SD_CS, sdSPI, 4000000, "/sd", 5)) {
-                hal_log("LOGGER: SD card mounted OK");
+                LOGI("SDL", "SD card mounted OK");
                 openLogFile();
                 s_logging_active = true;
                 s_session_flush_total = 0;
                 s_last_flush_count = 0;
                 s_last_overflow = 0;
             } else {
-                hal_log("LOGGER: ERROR – SD card init failed");
+                LOGE("SDL", "ERROR – SD card init failed");
                 s_logging_active = false;
             }
 
@@ -301,8 +306,8 @@ static void loggerTaskFunc(void* param) {
 
         } else if (!switch_debounced && was_active) {
             // --- TRANSITION: ON -> OFF ---
-            hal_log("LOGGER: switch OFF – stopping logging session");
-            hal_log("LOGGER: session stats: %lu records flushed, %lu buffer overflows",
+            LOGI("SDL", "switch OFF – stopping logging session");
+            LOGI("SDL", "session stats: %lu records flushed, %lu buffer overflows",
                     (unsigned long)s_session_flush_total,
                     (unsigned long)sdLoggerGetOverflowCount() - s_last_overflow);
 
@@ -333,7 +338,7 @@ static void loggerTaskFunc(void* param) {
                     if (flushed > 0) {
                         uint32_t buf_remaining = sdLoggerGetBufferCount();
                         uint32_t overflows = sdLoggerGetOverflowCount();
-                        hal_log("LOGGER: flushed %lu records (buf=%lu, overflow=%lu)",
+                        LOGI("SDL", "flushed %lu records (buf=%lu, overflow=%lu)",
                                 (unsigned long)flushed,
                                 (unsigned long)buf_remaining,
                                 (unsigned long)overflows);
@@ -342,7 +347,7 @@ static void loggerTaskFunc(void* param) {
                     s_log_file.close();
                 }
             } else {
-                hal_log("LOGGER: ERROR – SD card re-init failed during flush");
+                LOGE("SDL", "ERROR – SD card re-init failed during flush");
             }
 
             SD.end();
@@ -361,7 +366,7 @@ static void loggerTaskFunc(void* param) {
 void sdLoggerInit(void) {
     // Configure logging switch GPIO
     pinMode(LOG_SWITCH_PIN, INPUT_PULLUP);
-    hal_log("LOGGER: switch on GPIO %d (active LOW)", LOG_SWITCH_PIN);
+    LOGI("SDL", "switch on GPIO %d (active LOW)", LOG_SWITCH_PIN);
 
     s_logging_active = false;
 
@@ -376,6 +381,6 @@ void sdLoggerInit(void) {
         0               // Core 0
     );
 
-    hal_log("LOGGER: initialised (flush interval = %lu ms, log rate = 10 Hz)",
+    LOGI("SDL", "initialised (flush interval = %lu ms, log rate = 10 Hz)",
             (unsigned long)LOGGER_INTERVAL_MS);
 }

@@ -9,9 +9,14 @@
 #include "global_state.h"
 #include "hal/hal.h"
 
+#include "log_config.h"
+#define LOG_LOCAL_LEVEL LOG_LEVEL_WAS
+#include "esp_log.h"
+#include "log_ext.h"
+
 void steerAngleInit(void) {
     hal_steer_angle_begin();
-    hal_log("SteerAngle: initialised (SPI stub)");
+    LOGI("WAS", "initialised (SPI stub)");
 }
 
 float steerAngleReadDeg(void) {

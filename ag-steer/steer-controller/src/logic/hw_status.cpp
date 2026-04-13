@@ -13,6 +13,11 @@
 #include "pgn_types.h"
 #include "hal/hal.h"
 
+#include "log_config.h"
+#define LOG_LOCAL_LEVEL LOG_LEVEL_HWS
+#include "esp_log.h"
+#include "log_ext.h"
+
 #include <cstdarg>
 #include <cstdio>
 
@@ -61,7 +66,7 @@ void hwStatusInit(void) {
         s_subsys[i].last_sent  = 0;
     }
     s_last_msg_sent_ms = 0;
-    hal_log("HWSTATUS: monitoring initialised (%u subsystems)", (unsigned)HW_COUNT);
+    LOGI("HWS", "monitoring initialised (%u subsystems)", (unsigned)HW_COUNT);
 }
 
 // ===================================================================
@@ -73,7 +78,7 @@ void hwStatusSetFlag(HwSubsystem id, HwSeverity severity) {
         s_subsys[id].error = true;
         s_subsys[id].severity = severity;
         s_subsys[id].first_seen = hal_millis();
-        hal_log("HWSTATUS: ERROR flagged: %s (sev=%u)",
+        LOGE("HWS", "ERROR flagged: %s (sev=%u)",
                 s_subsys_names[id], (unsigned)severity);
     }
 }
@@ -81,7 +86,7 @@ void hwStatusSetFlag(HwSubsystem id, HwSeverity severity) {
 void hwStatusClearFlag(HwSubsystem id) {
     if (id >= HW_COUNT) return;
     if (s_subsys[id].error) {
-        hal_log("HWSTATUS: CLEARED: %s", s_subsys_names[id]);
+        LOGI("HWS", "CLEARED: %s", s_subsys_names[id]);
     }
     s_subsys[id].error = false;
     s_subsys[id].severity = HW_SEV_OK;
@@ -116,7 +121,7 @@ static void sendHwMessage(uint8_t src, uint8_t color, uint8_t duration,
     if (len > 0) {
         hal_net_send(tx_buf, len, aog_port::AGIO_SEND);
         s_last_msg_sent_ms = now;
-        hal_log("HWSTATUS: sent msg color=%u dur=%u \"%s\"",
+        LOGI("HWS", "sent msg color=%u dur=%u \"%s\"",
                 (unsigned)color, (unsigned)duration, text);
     }
 }
