@@ -34,13 +34,34 @@
 // Internal state
 // ===================================================================
 
-/// Module table – all modules this firmware implements
 static constexpr uint16_t AOG_PORT_MACHINE = 5127;
 
+// Profile-driven module role:
+//  - profile_sensor_front => GPS module
+//  - profile_actor_rear   => Machine module
+//  - profile_full_steer OR no explicit profile => Steer module
+static constexpr bool kProfileSensorFront = (FEAT_CFG_PROFILE_SENSOR_FRONT != 0);
+static constexpr bool kProfileActorRear   = (FEAT_CFG_PROFILE_ACTOR_REAR != 0);
+static constexpr bool kProfileFullSteer   = (FEAT_CFG_PROFILE_FULL_STEER != 0);
+static constexpr bool kProfileAny         = (FEAT_CFG_PROFILE_ANY != 0);
+
+static constexpr bool moduleEnabledSteer(void) {
+    return feat::comm() && (!kProfileAny || kProfileFullSteer || FEAT_CFG_PROFILE_COMM_ONLY);
+}
+
+static constexpr bool moduleEnabledGps(void) {
+    return feat::comm() && kProfileSensorFront;
+}
+
+static constexpr bool moduleEnabledMachine(void) {
+    return feat::comm() && kProfileActorRear;
+}
+
+/// Module table – all modules this firmware can expose
 static AogModuleInfo s_modules[AOG_MOD_COUNT] = {
-    { aog_src::STEER,   aog_port::STEER, "Steer",   feat::control(), false },
-    { aog_src::GPS_REPLY, aog_port::GPS, "GPS",     feat::sensor() || feat::imu(), false },
-    { aog_src::MACHINE, AOG_PORT_MACHINE, "Machine", feat::actor(), false },
+    { aog_src::STEER,    aog_port::STEER, "Steer",   moduleEnabledSteer(), false },
+    { aog_src::GPS_REPLY, aog_port::GPS,  "GPS",     moduleEnabledGps(), false },
+    { aog_src::MACHINE,  AOG_PORT_MACHINE, "Machine", moduleEnabledMachine(), false },
 };
 
 /// Hardware detection results (filled by modulesInit)
@@ -92,14 +113,14 @@ void modulesInit(void) {
     if (feat::control()) steer_hw_ok = steer_hw_ok && s_hw.safety_ok;
     s_modules[AOG_MOD_STEER].hw_detected = steer_hw_ok;
 
-    // GPS Module: comm + positioning sensors
+    // GPS Module: front sensing path
     bool gps_hw_ok = true;
     if (feat::comm())   gps_hw_ok = gps_hw_ok && s_hw.eth_detected;
     if (feat::sensor()) gps_hw_ok = gps_hw_ok && s_hw.was_detected;
     if (feat::imu())    gps_hw_ok = gps_hw_ok && s_hw.imu_detected;
     s_modules[AOG_MOD_GPS].hw_detected = gps_hw_ok;
 
-    // Machine Module: comm + actuator/safety path
+    // Machine Module: rear actor path
     bool machine_hw_ok = true;
     if (feat::comm())    machine_hw_ok = machine_hw_ok && s_hw.eth_detected;
     if (feat::actor())   machine_hw_ok = machine_hw_ok && s_hw.actuator_detected;

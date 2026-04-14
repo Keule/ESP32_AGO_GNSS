@@ -15,8 +15,8 @@
  *
  * Modules implemented by this firmware:
  *   1. Steer Module   (Src=0x7E, Port=5126) – steering control
- *   2. GPS Module     (Src=0x78, Port=5124) – GPS/discovery endpoint
- *   3. Machine Module (Src=0x7B, Port=5127) – machine/discovery endpoint
+ *   2. GPS Module     (Src=0x78, Port=5124) – front sensor/GPS endpoint
+ *   3. Machine Module (Src=0x7B, Port=5127) – rear actor/machine endpoint
  *
  * Reference: https://github.com/AgOpenGPS-Official/Boards/blob/main/PGN.md
  */
