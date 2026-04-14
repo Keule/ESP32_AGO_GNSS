@@ -6,6 +6,7 @@
  */
 
 #include "steer_angle.h"
+#include "dependency_policy.h"
 #include "global_state.h"
 #include "hal/hal.h"
 
@@ -21,10 +22,14 @@ void steerAngleInit(void) {
 
 float steerAngleReadDeg(void) {
     float angle = hal_steer_angle_read_deg();
+    const uint32_t now_ms = hal_millis();
+    const bool plausible = dep_policy::isSteerAnglePlausible(angle);
 
     {
         StateLock lock;
         g_nav.steer_angle_deg = angle;
+        g_nav.steer_angle_timestamp_ms = now_ms;
+        g_nav.steer_angle_quality_ok = plausible;
     }
 
     return angle;

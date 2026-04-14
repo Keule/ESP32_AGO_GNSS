@@ -7,6 +7,7 @@
  */
 
 #include "imu.h"
+#include "dependency_policy.h"
 #include "global_state.h"
 #include "hal/hal.h"
 
@@ -25,15 +26,22 @@ bool imuUpdate(void) {
     float roll = 0.0f;
 
     if (!hal_imu_read(&yaw_rate, &roll)) {
+        StateLock lock;
+        g_nav.imu_quality_ok = false;
         return false;
     }
+
+    const uint32_t now_ms = hal_millis();
+    const bool plausible = dep_policy::isImuPlausible(yaw_rate, roll);
 
     {
         StateLock lock;
         g_nav.yaw_rate_dps = yaw_rate;
         g_nav.roll_deg = roll;
-        g_nav.timestamp_ms = hal_millis();
+        g_nav.imu_timestamp_ms = now_ms;
+        g_nav.imu_quality_ok = plausible;
+        g_nav.timestamp_ms = now_ms;
     }
 
-    return true;
+    return plausible;
 }
