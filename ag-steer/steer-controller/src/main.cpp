@@ -51,6 +51,7 @@ static void controlTaskFunc(void* param) {
 
     const TickType_t interval = pdMS_TO_TICKS(5);  // 200 Hz = 5 ms
     uint32_t ctrl_dbg_count = 0;
+    uint32_t ctrl_freq_start = hal_millis();
 
     for (;;) {
         uint32_t start = hal_millis();
@@ -64,7 +65,11 @@ static void controlTaskFunc(void* param) {
         // Heartbeat DBG every 1s (= every 200 iterations)
         ctrl_dbg_count++;
         if (ctrl_dbg_count % 200 == 0) {
-            Serial.printf("[DBG-CTRL] alive tick=%lu\n", (unsigned long)ctrl_dbg_count);
+            uint32_t freq_now = hal_millis();
+            float hz = (ctrl_dbg_count * 1000.0f) / (float)(freq_now - ctrl_freq_start);
+            ctrl_freq_start = freq_now;
+            ctrl_dbg_count = 0;
+            Serial.printf("[DBG-CTRL] %.1f Hz\n", hz);
             Serial.flush();
         }
 
@@ -95,6 +100,7 @@ static void commTaskFunc(void* param) {
     static uint32_t s_last_hw_status_ms = 0;
     static const uint32_t HW_STATUS_INTERVAL_MS = 1000;
     uint32_t comm_dbg_count = 0;
+    uint32_t comm_freq_start = hal_millis();
 
     for (;;) {
         // Poll network for incoming frames
@@ -106,7 +112,11 @@ static void commTaskFunc(void* param) {
         // Heartbeat DBG every 5s (= every 500 iterations)
         comm_dbg_count++;
         if (comm_dbg_count % 500 == 0) {
-            Serial.printf("[DBG-COMM] alive tick=%lu\n", (unsigned long)comm_dbg_count);
+            uint32_t freq_now = hal_millis();
+            float hz = (comm_dbg_count * 1000.0f) / (float)(freq_now - comm_freq_start);
+            comm_freq_start = freq_now;
+            comm_dbg_count = 0;
+            Serial.printf("[DBG-COMM] %.1f Hz\n", hz);
             Serial.flush();
         }
 
@@ -313,7 +323,17 @@ void loop() {
     // Heartbeat DBG every 1s (= every ~10 iterations at 100ms delay)
     s_loop_dbg_count++;
     if (s_loop_dbg_count <= 5 || s_loop_dbg_count % 10 == 0) {
-        Serial.printf("[DBG-LOOP] alive tick=%lu\n", (unsigned long)s_loop_dbg_count);
+        static uint32_t s_loop_freq_start = 0;
+        static uint32_t s_loop_freq_count = 0;
+        if (s_loop_freq_start == 0) s_loop_freq_start = hal_millis();
+        s_loop_freq_count++;
+        if (s_loop_freq_count >= 10) {
+            uint32_t freq_now = hal_millis();
+            float hz = (s_loop_freq_count * 1000.0f) / (float)(freq_now - s_loop_freq_start);
+            s_loop_freq_start = freq_now;
+            s_loop_freq_count = 0;
+            Serial.printf("[DBG-LOOP] %.1f Hz\n", hz);
+        }
         Serial.flush();
     }
 
