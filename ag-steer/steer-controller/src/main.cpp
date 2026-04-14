@@ -19,12 +19,13 @@
 
 #include "hal/hal.h"
 #include "hal_esp32/hal_impl.h"
-#include "logic/global_state.h"
 #include "logic/control.h"
-#include "logic/net.h"
-#include "logic/modules.h"
+#include "logic/dependency_policy.h"
 #include "logic/features.h"
+#include "logic/global_state.h"
 #include "logic/hw_status.h"
+#include "logic/modules.h"
+#include "logic/net.h"
 #include "logic/sd_ota.h"
 #include "logic/sd_logger.h"
 
@@ -148,12 +149,31 @@ static void commTaskFunc(void* param) {
         if (now - s_last_hw_status_ms >= HW_STATUS_INTERVAL_MS) {
             s_last_hw_status_ms = now;
 
+            bool safety_ok = true;
+            bool steer_quality_ok = false;
+            uint32_t steer_ts_ms = 0;
+            bool imu_quality_ok = false;
+            uint32_t imu_ts_ms = 0;
+            {
+                StateLock lock;
+                safety_ok = g_nav.safety_ok;
+                steer_quality_ok = g_nav.steer_angle_quality_ok;
+                steer_ts_ms = g_nav.steer_angle_timestamp_ms;
+                imu_quality_ok = g_nav.imu_quality_ok;
+                imu_ts_ms = g_nav.imu_timestamp_ms;
+            }
+
+            const bool steer_angle_valid =
+                dep_policy::isSteerAngleInputValid(now, steer_ts_ms, steer_quality_ok);
+            const bool imu_valid =
+                dep_policy::isImuInputValid(now, imu_ts_ms, imu_quality_ok);
+
             // Hardware status monitoring via hw_status subsystem
             uint8_t err_count = hwStatusUpdate(
                 hal_net_is_connected(),     // Ethernet connected
-                g_nav.safety_ok,            // Safety circuit OK
-                true,                       // Steer angle valid (TODO: actual check)
-                modulesHwOk(AOG_MOD_STEER)  // Module-level: all steer subsystems OK
+                safety_ok,                  // Safety circuit OK
+                steer_angle_valid,          // steer angle freshness + plausibility
+                imu_valid                   // IMU freshness + plausibility
             );
 
             // Log only on count changes, plus occasional reminders.

@@ -32,10 +32,14 @@ struct NavigationState {
     float   heading_deg;      // fused heading [degrees, 0-360]
     float   roll_deg;         // roll angle [degrees]
     float   yaw_rate_dps;     // yaw rate [degrees/second]
+    uint32_t imu_timestamp_ms; // last successful IMU update [ms]
+    bool    imu_quality_ok;    // true when most recent IMU sample is plausible
 
     // --- Steering ---
     float   steer_angle_deg;  // current measured steering angle [degrees]
     int16_t steer_angle_raw;  // raw ADC value from ADS1118
+    uint32_t steer_angle_timestamp_ms; // last steering sensor update [ms]
+    bool    steer_angle_quality_ok;    // true when steering sample is plausible
     bool    safety_ok;        // true = safety circuit OK, false = KICK
 
     // --- AgIO switches (from PGN 254 steer data status byte) ---

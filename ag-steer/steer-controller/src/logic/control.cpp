@@ -7,6 +7,7 @@
  */
 
 #include "control.h"
+#include "dependency_policy.h"
 #include "imu.h"
 #include "steer_angle.h"
 #include "actuator.h"
@@ -23,9 +24,6 @@
 // ===================================================================
 // Constants
 // ===================================================================
-
-/// Watchdog: disable steering if no PGN 254 received for this many ms
-constexpr uint32_t WATCHDOG_TIMEOUT_MS = 2500;
 
 /// Minimum GPS speed [km/h] to allow auto-steering.
 /// Reference disables steering below 0.1 km/h for safety.
@@ -213,7 +211,7 @@ void controlStep(void) {
     ControlOutputSnapshot out;
     // Arm watchdog only after first valid PGN 254 heartbeat was received.
     out.watchdog_triggered = (in.watchdog_timer_ms != 0u) &&
-                             (in.now_ms - in.watchdog_timer_ms > WATCHDOG_TIMEOUT_MS);
+                             (in.now_ms - in.watchdog_timer_ms > dep_policy::WATCHDOG_TIMEOUT_MS);
 
     if (!in.safety_ok || !in.auto_steer_enabled ||
         out.watchdog_triggered || in.gps_speed_kmh < MIN_STEER_SPEED_KMH) {
@@ -242,9 +240,15 @@ void controlStep(void) {
     actuatorWriteCommand(out.actuator_cmd);
 
     {
+        const bool steer_quality_ok =
+            dep_policy::isSteerAnglePlausible(in.current_angle_deg) &&
+            dep_policy::isSteerAngleRawPlausible(in.steer_raw);
+
         StateLock lock;
         g_nav.safety_ok = in.safety_ok;
         g_nav.steer_angle_raw = in.steer_raw;
+        g_nav.steer_angle_timestamp_ms = in.now_ms;
+        g_nav.steer_angle_quality_ok = steer_quality_ok;
         g_nav.watchdog_triggered = out.watchdog_triggered;
         g_nav.timestamp_ms = in.now_ms;
         g_nav.pid_output = out.actuator_cmd;
