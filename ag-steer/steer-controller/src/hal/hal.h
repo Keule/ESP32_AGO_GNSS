@@ -116,6 +116,9 @@ bool hal_imu_read(float* yaw_rate_dps, float* roll_deg);
 /// Performs a chip ID read to verify hardware responds.
 bool hal_imu_detect(void);
 
+/// Pulse IMU reset line (active LOW) for bring-up diagnostics.
+void hal_imu_reset_pulse(uint32_t low_ms, uint32_t settle_ms);
+
 /// Boot-time qualified IMU detection.
 /// Performs multiple samples and classifies responses.
 bool hal_imu_detect_boot_qualified(HalImuDetectStats* out);

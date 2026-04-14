@@ -361,8 +361,25 @@ void hal_sensor_spi_get_telemetry(HalSpiTelemetry* out) {
 void hal_imu_begin(void) {
     pinMode(CS_IMU, OUTPUT);
     digitalWrite(CS_IMU, HIGH);
+    pinMode(IMU_INT, INPUT_PULLUP);
+    pinMode(IMU_RST, OUTPUT);
+    digitalWrite(IMU_RST, HIGH);
     // TODO: Send BNO085 reset/initialise sequence over SPI
-    hal_log("ESP32: IMU begun on CS=%d (stub)", CS_IMU);
+    hal_log("ESP32: IMU begun on CS=%d INT=%d RST=%d (stub)", CS_IMU, IMU_INT, IMU_RST);
+}
+
+void hal_imu_reset_pulse(uint32_t low_ms, uint32_t settle_ms) {
+    const int int_before = digitalRead(IMU_INT);
+    digitalWrite(IMU_RST, LOW);
+    delay(low_ms);
+    const int int_during = digitalRead(IMU_INT);
+    digitalWrite(IMU_RST, HIGH);
+    delay(settle_ms);
+    const int int_after = digitalRead(IMU_INT);
+    hal_log("ESP32: IMU reset pulse low=%lums settle=%lums INT(before=%d during=%d after=%d)",
+            (unsigned long)low_ms,
+            (unsigned long)settle_ms,
+            int_before, int_during, int_after);
 }
 
 bool hal_imu_read(float* yaw_rate_dps, float* roll_deg) {
@@ -1111,6 +1128,7 @@ void hal_esp32_init_imu_bringup(void) {
     // IMU + steering-angle ADC for SPI cross-device diagnostics.
     // Keep actuator/network disabled in bring-up mode.
     hal_imu_begin();
+    hal_imu_reset_pulse(10, 20);
     hal_steer_angle_begin();
     hal_log("ESP32: IMU bring-up HAL init complete (ADS enabled, actuator/network skipped)");
 }

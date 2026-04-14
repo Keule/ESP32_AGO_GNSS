@@ -27,6 +27,8 @@ constexpr uint32_t k_detect_interval_ms = 1000;
 constexpr uint32_t k_read_interval_ms = 100;
 constexpr uint32_t k_ads_interval_ms = 1000;
 constexpr uint32_t k_phase_duration_ms = 6000;
+constexpr uint32_t k_reset_low_ms = 10;
+constexpr uint32_t k_reset_settle_ms = 20;
 constexpr uint8_t k_spi_mode_0 = 0;
 constexpr uint8_t k_spi_mode_3 = 3;
 uint32_t s_last_detect_ms = 0;
@@ -78,6 +80,7 @@ void resetPhaseStats() {
 void applyCase(uint8_t idx) {
     if (idx >= (sizeof(k_cases) / sizeof(k_cases[0]))) return;
     const BringupModeCase& c = k_cases[idx];
+    hal_imu_reset_pulse(k_reset_low_ms, k_reset_settle_ms);
     hal_imu_set_spi_config(c.freq_hz, c.mode);
     resetPhaseStats();
     s_phase_start_ms = hal_millis();

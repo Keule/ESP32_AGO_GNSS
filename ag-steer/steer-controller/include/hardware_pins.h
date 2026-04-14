@@ -74,6 +74,10 @@
 #define CS_STEER_ANG   18    // ADS1118 ADC (steer angle potentiometer)
 #define CS_ACT         40    // Actuator driver
 
+// IMU reset (active LOW). In bring-up wiring this shares GPIO40.
+// NOTE: This collides with CS_ACT and is therefore for IMU bring-up mode only.
+#define IMU_RST        40
+
 // ---------------------------------------------------------------------------
 // SD Card (FSPI = SPI2_HOST, OTA only)
 //
