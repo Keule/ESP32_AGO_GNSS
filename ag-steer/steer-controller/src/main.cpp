@@ -23,6 +23,7 @@
 #include "logic/control.h"
 #include "logic/net.h"
 #include "logic/modules.h"
+#include "logic/features.h"
 #include "logic/hw_status.h"
 #include "logic/sd_ota.h"
 #include "logic/sd_logger.h"
@@ -199,7 +200,11 @@ void setup() {
     // Initialise control system (PID controller with default gains).
     // NOTE: HAL-level init (imu, steer angle, actuator) was already done
     //       in hal_esp32_init_all().  controlInit() only sets up the PID.
-    controlInit();
+    if (feat::control()) {
+        controlInit();
+    } else {
+        hal_log("Main: control loop feature disabled");
+    }
 
     // -----------------------------------------------------------------
     // Steering Angle Calibration
@@ -211,7 +216,7 @@ void setup() {
     // The user is prompted via Serial to move steering to left/right
     // stops. Values are stored in NVS and survive reboots.
     // -----------------------------------------------------------------
-    {
+    if (feat::sensor()) {
         bool need_cal = !hal_steer_angle_is_calibrated();
 
         if (!need_cal) {
@@ -240,6 +245,8 @@ void setup() {
         } else {
             hal_log("Main: calibration OK (loaded from NVS)");
         }
+    } else {
+        hal_log("Main: steer angle calibration skipped (sensor feature disabled)");
     }
 
     // Initialise hardware status monitoring
@@ -257,7 +264,9 @@ void setup() {
     // The logger runs as a low-priority FreeRTOS task that periodically
     // drains a ring buffer to the SD card (every 2 seconds).
     // -----------------------------------------------------------------
-    sdLoggerInit();
+    if (feat::control()) {
+        sdLoggerInit();
+    }
 
     // Report initial hardware errors
     // Always call – reportError() will use UDP if network is up,
@@ -266,15 +275,19 @@ void setup() {
     modulesSendStartupErrors();
 
     // Create control task on Core 1
-    xTaskCreatePinnedToCore(
-        controlTaskFunc,
-        "ctrl",
-        4096,
-        nullptr,
-        configMAX_PRIORITIES - 2,  // high priority
-        &s_control_task_handle,
-        1   // Core 1
-    );
+    if (feat::control()) {
+        xTaskCreatePinnedToCore(
+            controlTaskFunc,
+            "ctrl",
+            4096,
+            nullptr,
+            configMAX_PRIORITIES - 2,  // high priority
+            &s_control_task_handle,
+            1   // Core 1
+        );
+    } else {
+        hal_log("Main: control task not started (feature disabled)");
+    }
 
     // Create communication task on Core 0
     xTaskCreatePinnedToCore(
