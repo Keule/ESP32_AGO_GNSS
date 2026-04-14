@@ -35,8 +35,12 @@
 // ===================================================================
 
 /// Module table – all modules this firmware implements
+static constexpr uint16_t AOG_PORT_MACHINE = 5127;
+
 static AogModuleInfo s_modules[AOG_MOD_COUNT] = {
-    { aog_src::STEER,     aog_port::STEER, "Steer", feat::comm(), false },
+    { aog_src::STEER,   aog_port::STEER, "Steer",   feat::control(), false },
+    { aog_src::GPS_REPLY, aog_port::GPS, "GPS",     feat::sensor() || feat::imu(), false },
+    { aog_src::MACHINE, AOG_PORT_MACHINE, "Machine", feat::actor(), false },
 };
 
 /// Hardware detection results (filled by modulesInit)
@@ -79,7 +83,7 @@ void modulesInit(void) {
 
     // --- Derive module hw_detected from subsystems ---
 
-    // Steer Module: needs Ethernet + WAS + Actuator + Safety
+    // Steer Module: full steering stack
     bool steer_hw_ok = true;
     if (feat::comm())    steer_hw_ok = steer_hw_ok && s_hw.eth_detected;
     if (feat::sensor())  steer_hw_ok = steer_hw_ok && s_hw.was_detected;
@@ -87,6 +91,20 @@ void modulesInit(void) {
     if (feat::actor())   steer_hw_ok = steer_hw_ok && s_hw.actuator_detected;
     if (feat::control()) steer_hw_ok = steer_hw_ok && s_hw.safety_ok;
     s_modules[AOG_MOD_STEER].hw_detected = steer_hw_ok;
+
+    // GPS Module: comm + positioning sensors
+    bool gps_hw_ok = true;
+    if (feat::comm())   gps_hw_ok = gps_hw_ok && s_hw.eth_detected;
+    if (feat::sensor()) gps_hw_ok = gps_hw_ok && s_hw.was_detected;
+    if (feat::imu())    gps_hw_ok = gps_hw_ok && s_hw.imu_detected;
+    s_modules[AOG_MOD_GPS].hw_detected = gps_hw_ok;
+
+    // Machine Module: comm + actuator/safety path
+    bool machine_hw_ok = true;
+    if (feat::comm())    machine_hw_ok = machine_hw_ok && s_hw.eth_detected;
+    if (feat::actor())   machine_hw_ok = machine_hw_ok && s_hw.actuator_detected;
+    if (feat::control()) machine_hw_ok = machine_hw_ok && s_hw.safety_ok;
+    s_modules[AOG_MOD_MACHINE].hw_detected = machine_hw_ok;
 
     // --- Log module summary ---
     hal_log("MODULES: === Module Summary ===");
@@ -124,13 +142,13 @@ bool modulesHwOk(AogModuleId id) {
 }
 
 // ===================================================================
-// Send hello replies for ALL enabled modules
+// Send hello replies for ALL active modules
 // ===================================================================
 void modulesSendHellos(void) {
     uint8_t buf[64];
 
     for (uint8_t i = 0; i < AOG_MOD_COUNT; i++) {
-        if (!s_modules[i].enabled) continue;
+        if (!s_modules[i].enabled || !s_modules[i].hw_detected) continue;
 
         const AogModuleInfo& mod = s_modules[i];
         size_t len = 0;
@@ -148,6 +166,14 @@ void modulesSendHellos(void) {
             if (g_nav.steer_switch) sw |= 0x02; // bit 1 = steer switch
             len = pgnEncodeHelloReplySteer(buf, sizeof(buf), angle, counts, sw);
             label = "SteerHello";
+        } else if (mod.src_id == aog_src::GPS_REPLY) {
+            len = pgnEncodeHelloReplyGps(buf, sizeof(buf));
+            label = "GpsHello";
+        } else if (mod.src_id == aog_src::MACHINE) {
+            uint8_t reserved[5] = {0};
+            len = pgnBuildFrame(buf, sizeof(buf), aog_src::MACHINE, aog_src::MACHINE,
+                                reserved, sizeof(reserved));
+            label = "MachineHello";
         }
 
         if (len > 0) {
@@ -160,13 +186,13 @@ void modulesSendHellos(void) {
 }
 
 // ===================================================================
-// Send subnet replies for ALL enabled modules
+// Send subnet replies for ALL active modules
 // ===================================================================
 void modulesSendSubnetReplies(void) {
     uint8_t buf[64];
 
     for (uint8_t i = 0; i < AOG_MOD_COUNT; i++) {
-        if (!s_modules[i].enabled) continue;
+        if (!s_modules[i].enabled || !s_modules[i].hw_detected) continue;
 
         const AogModuleInfo& mod = s_modules[i];
         size_t len = pgnEncodeSubnetReply(buf, sizeof(buf),

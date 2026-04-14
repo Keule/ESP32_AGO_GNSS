@@ -14,7 +14,9 @@
  *   (PGN 202) requests, and modules respond with hello/subnet replies.
  *
  * Modules implemented by this firmware:
- *   1. Steer Module (Src=0x7E, Port=5126) – steering control
+ *   1. Steer Module   (Src=0x7E, Port=5126) – steering control
+ *   2. GPS Module     (Src=0x78, Port=5124) – GPS/discovery endpoint
+ *   3. Machine Module (Src=0x7B, Port=5127) – machine/discovery endpoint
  *
  * Reference: https://github.com/AgOpenGPS-Official/Boards/blob/main/PGN.md
  */
@@ -29,6 +31,8 @@
 // ===================================================================
 enum AogModuleId : uint8_t {
     AOG_MOD_STEER = 0,   ///< Steering module (Src=0x7E, Port=5126)
+    AOG_MOD_GPS,         ///< GPS module (Src=0x78, Port=5124)
+    AOG_MOD_MACHINE,     ///< Machine module (Src=0x7B, Port=5127)
     AOG_MOD_COUNT        ///< Number of defined modules
 };
 
@@ -79,15 +83,17 @@ const AogModuleInfo* modulesGet(AogModuleId id);
 const ModuleHwStatus* modulesGetHwStatus(void);
 
 // ===================================================================
-// Send hello reply for ALL enabled modules.
+// Send hello reply for ALL active modules.
 // Each module sends its specific hello PGN on its port:
 //   - Steer: PGN=0x7E, Src=0x7E, Len=5 (angle+counts+switch)
+//   - GPS:   PGN=0x78, Src=0x78, Len=5 (reserved)
+//   - Mach:  PGN=0x7B, Src=0x7B, Len=5 (reserved)
 // Call when AgIO Hello (PGN 200) is received.
 // ===================================================================
 void modulesSendHellos(void);
 
 // ===================================================================
-// Send subnet reply for ALL enabled modules.
+// Send subnet reply for ALL active modules.
 // Each module sends: PGN=0xCB, Len=7 (IP + Subnet)
 // Call when AgIO Scan (PGN 202) is received.
 // ===================================================================
