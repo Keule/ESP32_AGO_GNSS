@@ -41,6 +41,18 @@ static TaskHandle_t s_control_task_handle = nullptr;
 static TaskHandle_t s_comm_task_handle = nullptr;
 
 // ===================================================================
+// Runtime/Debug logging knobs
+// ===================================================================
+static constexpr bool MAIN_VERBOSE_TASK_DBG = false;  // true => print loop Hz heartbeats
+static constexpr uint32_t MAIN_HW_ERR_REMINDER_MS = 30000;
+
+static inline bool shouldLogPeriodic(uint32_t now_ms, uint32_t* last_ms, uint32_t interval_ms) {
+    if (now_ms - *last_ms < interval_ms) return false;
+    *last_ms = now_ms;
+    return true;
+}
+
+// ===================================================================
 // Control Task – runs at 200 Hz on Core 1
 // ===================================================================
 static void controlTaskFunc(void* param) {
@@ -69,14 +81,16 @@ static void controlTaskFunc(void* param) {
             sdLoggerRecord();
         }
 
-        // Heartbeat DBG every 1s (= every 200 iterations)
-        ctrl_dbg_count++;
-        if (ctrl_dbg_count % 200 == 0) {
-            uint32_t freq_now = hal_millis();
-            float hz = (ctrl_dbg_count * 1000.0f) / (float)(freq_now - ctrl_freq_start);
-            ctrl_freq_start = freq_now;
-            ctrl_dbg_count = 0;
-            Serial.printf("[DBG-CTRL] %.1f Hz\n", hz);
+        if (MAIN_VERBOSE_TASK_DBG) {
+            // Heartbeat DBG every 1s (= every 200 iterations)
+            ctrl_dbg_count++;
+            if (ctrl_dbg_count % 200 == 0) {
+                uint32_t freq_now = hal_millis();
+                float hz = (ctrl_dbg_count * 1000.0f) / (float)(freq_now - ctrl_freq_start);
+                ctrl_freq_start = freq_now;
+                ctrl_dbg_count = 0;
+                Serial.printf("[DBG-CTRL] %.1f Hz\n", hz);
+            }
         }
 
         // Maintain fixed 200 Hz timing with minimal jitter.
@@ -104,6 +118,8 @@ static void commTaskFunc(void* param) {
     static const uint32_t HW_STATUS_INTERVAL_MS = 1000;
     uint32_t comm_dbg_count = 0;
     uint32_t comm_freq_start = hal_millis();
+    uint32_t last_hw_err_log_ms = 0;
+    uint8_t last_hw_err_count = 0xFF;
 
     for (;;) {
         // ---------------------------------- Input -----------------------------------
@@ -115,14 +131,16 @@ static void commTaskFunc(void* param) {
         // ---------------------------------- Output ----------------------------------
         netSendAogFrames();
 
-        // Heartbeat DBG every 5s (= every 500 iterations)
-        comm_dbg_count++;
-        if (comm_dbg_count % 500 == 0) {
-            uint32_t freq_now = hal_millis();
-            float hz = (comm_dbg_count * 1000.0f) / (float)(freq_now - comm_freq_start);
-            comm_freq_start = freq_now;
-            comm_dbg_count = 0;
-            Serial.printf("[DBG-COMM] %.1f Hz\n", hz);
+        if (MAIN_VERBOSE_TASK_DBG) {
+            // Heartbeat DBG every 5s (= every 500 iterations)
+            comm_dbg_count++;
+            if (comm_dbg_count % 500 == 0) {
+                uint32_t freq_now = hal_millis();
+                float hz = (comm_dbg_count * 1000.0f) / (float)(freq_now - comm_freq_start);
+                comm_freq_start = freq_now;
+                comm_dbg_count = 0;
+                Serial.printf("[DBG-COMM] %.1f Hz\n", hz);
+            }
         }
 
         // Hardware status monitoring (~1 Hz)
@@ -138,8 +156,18 @@ static void commTaskFunc(void* param) {
                 modulesHwOk(AOG_MOD_STEER)  // Module-level: all steer subsystems OK
             );
 
-            // Log error count periodically
-            if (err_count > 0) {
+            // Log only on count changes, plus occasional reminders.
+            bool changed = (err_count != last_hw_err_count);
+            bool reminder = (err_count > 0) &&
+                            shouldLogPeriodic(now, &last_hw_err_log_ms, MAIN_HW_ERR_REMINDER_MS);
+            if (changed || reminder) {
+                last_hw_err_count = err_count;
+                last_hw_err_log_ms = now;
+            }
+
+            if (changed) {
+                hal_log("COMM: HW error count changed -> %u", (unsigned)err_count);
+            } else if (reminder) {
                 hal_log("COMM: %u HW error(s) active", (unsigned)err_count);
             }
         }
@@ -333,21 +361,45 @@ void loop() {
                 g_nav.settings_received ? "Y" : "N");
     }
 
-    // Heartbeat DBG every 1s (= every ~10 iterations at 100ms delay)
-    s_loop_dbg_count++;
-    if (s_loop_dbg_count <= 5 || s_loop_dbg_count % 10 == 0) {
-        static uint32_t s_loop_freq_start = 0;
-        static uint32_t s_loop_freq_count = 0;
-        if (s_loop_freq_start == 0) s_loop_freq_start = hal_millis();
-        s_loop_freq_count++;
-        if (s_loop_freq_count >= 10) {
-            uint32_t freq_now = hal_millis();
-            float hz = (s_loop_freq_count * 1000.0f) / (float)(freq_now - s_loop_freq_start);
-            s_loop_freq_start = freq_now;
-            s_loop_freq_count = 0;
-            Serial.printf("[DBG-LOOP] %.1f Hz\n", hz);
+    if (MAIN_VERBOSE_TASK_DBG) {
+        // Heartbeat DBG every 1s (= every ~10 iterations at 100ms delay)
+        s_loop_dbg_count++;
+        if (s_loop_dbg_count <= 5 || s_loop_dbg_count % 10 == 0) {
+            static uint32_t s_loop_freq_start = 0;
+            static uint32_t s_loop_freq_count = 0;
+            if (s_loop_freq_start == 0) s_loop_freq_start = hal_millis();
+            s_loop_freq_count++;
+            if (s_loop_freq_count >= 10) {
+                uint32_t freq_now = hal_millis();
+                float hz = (s_loop_freq_count * 1000.0f) / (float)(freq_now - s_loop_freq_start);
+                s_loop_freq_start = freq_now;
+                s_loop_freq_count = 0;
+                Serial.printf("[DBG-LOOP] %.1f Hz\n", hz);
+            }
         }
     }
+
+#if LOG_SERIAL_CMD
+    // Runtime logging control:
+    //   log <tag> <none|error|warn|info|debug|verbose>
+    //   log all <level>
+    //   log status
+    //   filter <file[:line]> | filter off
+    static char cmd_buf[96];
+    static size_t cmd_len = 0;
+    while (Serial.available()) {
+        const int ch = Serial.read();
+        if (ch == '\r' || ch == '\n') {
+            if (cmd_len > 0) {
+                cmd_buf[cmd_len] = '\0';
+                logProcessSerialCmd(cmd_buf);
+                cmd_len = 0;
+            }
+        } else if (cmd_len + 1 < sizeof(cmd_buf)) {
+            cmd_buf[cmd_len++] = static_cast<char>(ch);
+        }
+    }
+#endif
 
     vTaskDelay(pdMS_TO_TICKS(100));
 }
