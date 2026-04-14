@@ -68,6 +68,17 @@ typedef struct {
     uint32_t was_deadline_miss;
 } HalSpiTelemetry;
 
+/// Static IMU SPI wiring/configuration info for diagnostics/bring-up logs.
+typedef struct {
+    int sck_pin;
+    int miso_pin;
+    int mosi_pin;
+    int cs_pin;
+    int int_pin;
+    uint32_t freq_hz;
+    uint8_t mode;
+} HalImuSpiInfo;
+
 /// Initialise SPI bus 2 (sensor bus) and all chip selects.
 void hal_sensor_spi_init(void);
 
@@ -93,6 +104,9 @@ bool hal_imu_read(float* yaw_rate_dps, float* roll_deg);
 /// Detect if IMU chip is present on SPI bus (call after hal_imu_begin).
 /// Performs a chip ID read to verify hardware responds.
 bool hal_imu_detect(void);
+
+/// Return IMU SPI pin mapping + SPI settings used by HAL.
+void hal_imu_get_spi_info(HalImuSpiInfo* out);
 
 // --- Steering Angle Sensor ---
 

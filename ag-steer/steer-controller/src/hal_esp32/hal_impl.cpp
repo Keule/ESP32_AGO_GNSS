@@ -401,6 +401,17 @@ bool hal_imu_detect(void) {
     return detected;
 }
 
+void hal_imu_get_spi_info(HalImuSpiInfo* out) {
+    if (!out) return;
+    out->sck_pin = SENS_SPI_SCK;
+    out->miso_pin = SENS_SPI_MISO;
+    out->mosi_pin = SENS_SPI_MOSI;
+    out->cs_pin = CS_IMU;
+    out->int_pin = IMU_INT;
+    out->freq_hz = k_spi_cfg_imu.freq_hz;
+    out->mode = k_spi_cfg_imu.mode;
+}
+
 // ===================================================================
 // ADS1118 - 16-Bit ADC for steering angle potentiometer
 // ===================================================================
@@ -1014,7 +1025,7 @@ bool hal_net_detected(void) {
 // ===================================================================
 // ESP32 init all
 // ===================================================================
-void hal_esp32_init_all(void) {
+static void hal_esp32_common_boot_init(void) {
     // Serial
     Serial.begin(115200);
     uint32_t serial_start = millis();
@@ -1037,6 +1048,18 @@ void hal_esp32_init_all(void) {
 
     // SPI sensor bus (FSPI / SPI2_HOST) - SCK=16, MISO=15, MOSI=17
     hal_sensor_spi_init();
+}
+
+void hal_esp32_init_imu_bringup(void) {
+    hal_esp32_common_boot_init();
+
+    // IMU only (explicitly no actuator dependency in bring-up mode)
+    hal_imu_begin();
+    hal_log("ESP32: IMU bring-up HAL init complete (actuator/network skipped)");
+}
+
+void hal_esp32_init_all(void) {
+    hal_esp32_common_boot_init();
 
     // IMU, steer angle, actuator
     hal_imu_begin();

@@ -8,8 +8,10 @@
  *   - commTask  (Core 0): Ethernet/UDP, AOG protocol, HW status
  *   - controlTask (Core 1): 200 Hz control loop, PID, safety, actuators
  *
- * NOTE: All hardware init is done in hal_esp32_init_all() during setup().
- *       The tasks do NOT re-initialize anything.
+ * NOTE: Hardware init is done in setup():
+ *       - normal mode: hal_esp32_init_all()
+ *       - IMU bring-up mode: hal_esp32_init_imu_bringup()
+ *       Tasks do NOT re-initialize anything.
  */
 
 #include <Arduino.h>
@@ -24,6 +26,7 @@
 #include "logic/features.h"
 #include "logic/global_state.h"
 #include "logic/hw_status.h"
+#include "logic/imu.h"
 #include "logic/modules.h"
 #include "logic/net.h"
 #include "logic/sd_ota.h"
@@ -40,6 +43,7 @@
 // ===================================================================
 static TaskHandle_t s_control_task_handle = nullptr;
 static TaskHandle_t s_comm_task_handle = nullptr;
+static bool s_imu_bringup_active = false;
 
 // ===================================================================
 // Runtime/Debug logging knobs
@@ -216,8 +220,14 @@ static void commTaskFunc(void* param) {
 // Arduino setup()
 // ===================================================================
 void setup() {
-    // Initialise ALL hardware (mutex, safety, SPI, sensors, W5500)
-    hal_esp32_init_all();
+    s_imu_bringup_active = imuBringupModeEnabled();
+    if (s_imu_bringup_active) {
+        // Explicit bring-up path: no actuator or network dependency.
+        hal_esp32_init_imu_bringup();
+    } else {
+        // Normal operation path.
+        hal_esp32_init_all();
+    }
 
     // -----------------------------------------------------------------
     // Firmware Version & Build Info (always printed)
@@ -232,6 +242,12 @@ void setup() {
                 part ? (unsigned)part->address : 0);
         hal_log("  Flash: %d KB free", (int)(ESP.getFreeSketchSpace() / 1024));
         hal_log("========================================");
+    }
+
+    if (s_imu_bringup_active) {
+        hal_log("Main: IMU bring-up mode active (FEAT_IMU_BRINGUP).");
+        imuBringupInit();
+        return;
     }
 
     // -----------------------------------------------------------------
@@ -373,6 +389,12 @@ void setup() {
 static uint32_t s_loop_dbg_count = 0;
 
 void loop() {
+    if (s_imu_bringup_active) {
+        imuBringupTick();
+        vTaskDelay(pdMS_TO_TICKS(20));
+        return;
+    }
+
     // Feed watchdog to prevent trigger from this task
     esp_task_wdt_reset();
 

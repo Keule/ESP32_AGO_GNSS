@@ -90,7 +90,7 @@
 // ---------------------------------------------------------------------------
 // IMU interrupt (BNO085 INT pin) - needs bidirectional GPIO for input!
 // ---------------------------------------------------------------------------
-#define IMU_INT        48    // GPIO 48 is bidirectional on ESP32-S3
+#define IMU_INT        39    // IMU INT routed to GPIO 39 (bring-up wiring)
 
 // ---------------------------------------------------------------------------
 // Safety input (active LOW)
