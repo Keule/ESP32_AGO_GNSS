@@ -211,7 +211,9 @@ void controlStep(void) {
     // Processing phase (pure computation / decisions)
     // ----------------------------------------------------------
     ControlOutputSnapshot out;
-    out.watchdog_triggered = (in.now_ms - in.watchdog_timer_ms > WATCHDOG_TIMEOUT_MS);
+    // Arm watchdog only after first valid PGN 254 heartbeat was received.
+    out.watchdog_triggered = (in.watchdog_timer_ms != 0u) &&
+                             (in.now_ms - in.watchdog_timer_ms > WATCHDOG_TIMEOUT_MS);
 
     if (!in.safety_ok || !in.auto_steer_enabled ||
         out.watchdog_triggered || in.gps_speed_kmh < MIN_STEER_SPEED_KMH) {
