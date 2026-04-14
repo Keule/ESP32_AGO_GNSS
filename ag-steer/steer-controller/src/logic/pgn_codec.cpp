@@ -71,6 +71,29 @@ size_t pgnBuildFrame(uint8_t* buf, size_t buf_size,
 }
 
 // ===================================================================
+// Check if a PGN belongs to the discovery/management path.
+//
+// Discovery PGNs (200, 201, 202) are sent by AgIO with static trailing
+// bytes that do NOT match the additive checksum rule.  The AgIO and
+// ModSim discovery receive paths do not validate checksum before
+// processing.  Therefore we must skip CRC validation for these PGNs.
+//
+// Module hello replies (PGN == source byte, e.g. 0x7E, 0x7B, 0x79)
+// are also not checksum-validated by AgIO on the receive path.
+// ===================================================================
+static bool pgnIsDiscovery(uint8_t pgn, uint8_t src) {
+    // Discovery PGNs from AgIO
+    if (pgn == 0xC8 || pgn == 0xC9 || pgn == 0xCA) return true;
+
+    // Module hello replies: PGN == src byte
+    // 0x7E = steer, 0x7B = machine, 0x79 = IMU, 0x78 = GPS
+    if (pgn == src && (pgn == 0x7E || pgn == 0x7B || pgn == 0x79 || pgn == 0x78))
+        return true;
+
+    return false;
+}
+
+// ===================================================================
 // Validate a received frame: preamble, bounds, CRC
 // ===================================================================
 bool pgnValidateFrame(const uint8_t* frame, size_t frame_len,
@@ -92,25 +115,28 @@ bool pgnValidateFrame(const uint8_t* frame, size_t frame_len,
         return false;
     if (len > aog_frame::MAX_PAYLOAD) return false;
 
-    // CRC check: sum of bytes[2..(5+len-1)] must match byte[5+len]
-    size_t crc_idx = aog_frame::HEADER_SIZE + len;
-    uint8_t expected_crc = pgnChecksum(frame, crc_idx + aog_frame::CRC_SIZE);
-    if (frame[crc_idx] != expected_crc) {
-        // Rate-limit CRC mismatch logs (max once per 10s)
-        static uint32_t s_last_crc_log_ms = 0;
-        uint32_t now = hal_millis();
-        if (now - s_last_crc_log_ms >= 10000) {
-            s_last_crc_log_ms = now;
-            // Include hex dump for diagnosis
-            char hexbuf[128];
-            char* p = hexbuf;
-            for (size_t i = 0; i < frame_len && (p - hexbuf) < static_cast<int>(sizeof(hexbuf)) - 4; i++) {
-                p += snprintf(p, 4, "%02X ", frame[i]);
+    // CRC check — skip for discovery/management PGNs
+    // (AgIO sends these with static trailing bytes that don't match)
+    if (!pgnIsDiscovery(pgn, src)) {
+        size_t crc_idx = aog_frame::HEADER_SIZE + len;
+        uint8_t expected_crc = pgnChecksum(frame, crc_idx + aog_frame::CRC_SIZE);
+        if (frame[crc_idx] != expected_crc) {
+            // Rate-limit CRC mismatch logs (max once per 10s)
+            static uint32_t s_last_crc_log_ms = 0;
+            uint32_t now = hal_millis();
+            if (now - s_last_crc_log_ms >= 10000) {
+                s_last_crc_log_ms = now;
+                // Include hex dump for diagnosis
+                char hexbuf[128];
+                char* p = hexbuf;
+                for (size_t i = 0; i < frame_len && (p - hexbuf) < static_cast<int>(sizeof(hexbuf)) - 4; i++) {
+                    p += snprintf(p, 4, "%02X ", frame[i]);
+                }
+                LOGE("PGN", "CRC mismatch: got 0x%02X, exp 0x%02X (Src=%u PGN=0x%02X) [%s]",
+                        frame[crc_idx], expected_crc, src, pgn, hexbuf);
             }
-            LOGE("PGN", "CRC mismatch: got 0x%02X, exp 0x%02X (Src=%u PGN=0x%02X) [%s]",
-                    frame[crc_idx], expected_crc, src, pgn, hexbuf);
+            return false;
         }
-        return false;
     }
 
     // Fill outputs
@@ -149,6 +175,21 @@ bool pgnChecksumSelfTest(void) {
     std::memcpy(rx, tx, tx_len);
     rx[tx_len - 1] ^= 0xFF;
     if (pgnValidateFrame(rx, tx_len, &v_src, &v_pgn, &v_pay, &v_plen)) return false;
+
+    // Test: Discovery PGN 200 (Hello from AgIO) with WRONG checksum
+    // AgIO sends: [0x80, 0x81, 0x7F, 200, 3, 56, 0, 0, 0x47]
+    // The trailing byte 0x47 does NOT match the additive checksum (0x88),
+    // but the frame must still be accepted because it's a discovery PGN.
+    uint8_t discovery_frame[] = { 0x80, 0x81, 0x7F, 0xC8, 0x03, 56, 0x00, 0x00, 0x47 };
+    if (!pgnValidateFrame(discovery_frame, sizeof(discovery_frame),
+                          &v_src, &v_pgn, &v_pay, &v_plen)) return false;
+    if (v_src != 0x7F || v_pgn != 0xC8 || v_plen != 3) return false;
+
+    // Test: Discovery PGN 202 (Scan Request) with arbitrary trailing byte
+    uint8_t scan_frame[] = { 0x80, 0x81, 0x7F, 0xCA, 0x03, 0xCA, 0xCA, 0x05, 0xFF };
+    if (!pgnValidateFrame(scan_frame, sizeof(scan_frame),
+                          &v_src, &v_pgn, &v_pay, &v_plen)) return false;
+    if (v_src != 0x7F || v_pgn != 0xCA || v_plen != 3) return false;
 
     return true;
 }
