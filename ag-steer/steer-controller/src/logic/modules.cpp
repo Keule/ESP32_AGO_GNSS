@@ -16,6 +16,7 @@
  */
 
 #include "modules.h"
+#include "features.h"
 #include "pgn_codec.h"
 #include "pgn_types.h"
 #include "global_state.h"
@@ -35,7 +36,7 @@
 
 /// Module table – all modules this firmware implements
 static AogModuleInfo s_modules[AOG_MOD_COUNT] = {
-    { aog_src::STEER,     aog_port::STEER, "Steer", true, false },
+    { aog_src::STEER,     aog_port::STEER, "Steer", feat::comm(), false },
 };
 
 /// Hardware detection results (filled by modulesInit)
@@ -57,33 +58,35 @@ void modulesInit(void) {
     // --- Detect individual subsystems ---
 
     // Ethernet
-    s_hw.eth_detected = hal_net_detected();
+    s_hw.eth_detected = feat::comm() ? hal_net_detected() : true;
     hal_log("MODULES: Ethernet (W5500)    : %s", s_hw.eth_detected ? "OK" : "FAIL");
 
     // Steer Angle Sensor (ADS1118) – detect BEFORE IMU!
     // The ADS1118 holds DOUT LOW while converting, which would
     // cause the IMU detect to read 0x00 (false negative).
     // Detecting ADS1118 first ensures DOUT is HIGH after detection.
-    s_hw.was_detected = hal_steer_angle_detect();
+    s_hw.was_detected = feat::sensor() ? hal_steer_angle_detect() : true;
 
     // IMU (BNO085)
-    s_hw.imu_detected = hal_imu_detect();
+    s_hw.imu_detected = feat::imu() ? hal_imu_detect() : true;
 
     // Actuator
-    s_hw.actuator_detected = hal_actuator_detect();
+    s_hw.actuator_detected = feat::actor() ? hal_actuator_detect() : true;
 
     // Safety circuit
-    s_hw.safety_ok = hal_safety_ok();
+    s_hw.safety_ok = feat::control() ? hal_safety_ok() : true;
     hal_log("MODULES: Safety Circuit       : %s", s_hw.safety_ok ? "OK" : "KICK");
 
     // --- Derive module hw_detected from subsystems ---
 
     // Steer Module: needs Ethernet + WAS + Actuator + Safety
-    s_modules[AOG_MOD_STEER].hw_detected =
-        s_hw.eth_detected &&
-        s_hw.was_detected &&
-        s_hw.actuator_detected &&
-        s_hw.safety_ok;
+    bool steer_hw_ok = true;
+    if (feat::comm())    steer_hw_ok = steer_hw_ok && s_hw.eth_detected;
+    if (feat::sensor())  steer_hw_ok = steer_hw_ok && s_hw.was_detected;
+    if (feat::imu())     steer_hw_ok = steer_hw_ok && s_hw.imu_detected;
+    if (feat::actor())   steer_hw_ok = steer_hw_ok && s_hw.actuator_detected;
+    if (feat::control()) steer_hw_ok = steer_hw_ok && s_hw.safety_ok;
+    s_modules[AOG_MOD_STEER].hw_detected = steer_hw_ok;
 
     // --- Log module summary ---
     hal_log("MODULES: === Module Summary ===");
@@ -214,31 +217,31 @@ void modulesSendStartupErrors(void) {
     // If network is down, errors go to Serial only.
 
     // Ethernet
-    if (!s_hw.eth_detected) {
+    if (feat::comm() && !s_hw.eth_detected) {
         reportError("Ethernet", "ERR Ethernet: W5500 Not Detected",
                     aog_src::STEER, aog_hwmsg::COLOR_RED);
     }
 
     // IMU
-    if (!s_hw.imu_detected) {
+    if (feat::imu() && !s_hw.imu_detected) {
         reportError("IMU", "ERR IMU (BNO085): Not Detected",
                     aog_src::STEER, aog_hwmsg::COLOR_RED);
     }
 
     // Steer Angle Sensor
-    if (!s_hw.was_detected) {
+    if (feat::sensor() && !s_hw.was_detected) {
         reportError("SteerAngle", "ERR Steer Angle Sensor: Not Detected",
                     aog_src::STEER, aog_hwmsg::COLOR_RED);
     }
 
     // Actuator
-    if (!s_hw.actuator_detected) {
+    if (feat::actor() && !s_hw.actuator_detected) {
         reportError("Actuator", "ERR Actuator: Not Detected",
                     aog_src::STEER, aog_hwmsg::COLOR_RED);
     }
 
     // Safety Circuit
-    if (!s_hw.safety_ok) {
+    if (feat::control() && !s_hw.safety_ok) {
         reportError("Safety", "ERR Safety Circuit: KICK Engaged",
                     aog_src::STEER, aog_hwmsg::COLOR_RED);
     }
@@ -262,6 +265,8 @@ void modulesSendStartupErrors(void) {
 // Update dynamic hardware status (late detection)
 // ===================================================================
 void modulesUpdateStatus(void) {
+    if (!feat::control()) return;
+
     // Safety circuit: dynamic monitoring
     bool current_safety = hal_safety_ok();
     if (current_safety != s_hw.safety_ok) {
