@@ -236,8 +236,8 @@ static_assert(sizeof(AogSteerDataIn) == 8, "AogSteerDataIn must be 8 bytes");
 ///   [7]   PWMDisplay        uint8     current PWM (0-255)
 struct __attribute__((packed)) AogSteerStatusOut {
     int16_t  actualSteerAngle;  // [degrees × 100], signed LE
-    int16_t  imuHeading;        // [degrees × 10], signed LE
-    int16_t  imuRoll;           // [degrees × 10], signed LE
+    int16_t  imuHeading;        // [degrees × 10], signed LE; 9999 = not available
+    int16_t  imuRoll;           // [degrees × 10], signed LE; 8888 = not available
     uint8_t  switchStatus;      // bit0=work, bit1=steer, bit7=safety
     uint8_t  pwmDisplay;        // Current PWM value (0-255)
 };
@@ -287,9 +287,9 @@ struct __attribute__((packed)) AogSteerConfigIn {
 static_assert(sizeof(AogSteerConfigIn) == 8, "AogSteerConfigIn must be 8 bytes");
 
 /// PGN 250: From Autosteer 2 (Src=0x7E -> AgIO)
-/// Total payload: 8 bytes — sensor value from steer module
+/// Total payload: 8 bytes for compatibility. Byte 0 is WAS scaled 0..255.
 struct __attribute__((packed)) AogFromAutosteer2 {
-    uint8_t  sensorValue;       // Steer angle sensor raw value (low byte)
+    uint8_t  sensorValue;       // Calibrated WAS 0..255, raw low byte fallback
     uint8_t  reserved[7];       // Unused
 };
 static_assert(sizeof(AogFromAutosteer2) == 8, "AogFromAutosteer2 must be 8 bytes");

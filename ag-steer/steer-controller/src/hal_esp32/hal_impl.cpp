@@ -7,7 +7,7 @@
  *   - Ethernet: W5500 over SPI3_HOST (GPIO 9/10/11/12/13/14) via ESP-IDF ETH driver
  *   - Sensor SPI (FSPI/SPI2_HOST): SCK=16, MISO=15, MOSI=17
  *     - ADS1118 ADC (steer angle): CS=18
- *     - BNO085 IMU: CS=38
+ *     - BNO085 IMU: CS=47
  *     - Actuator: CS=40
  *   - SD Card (FSPI, OTA only): SCK=7, MISO=5, MOSI=6, CS=42
  *   - Safety: GPIO4 active LOW
@@ -104,6 +104,7 @@ enum class SpiClient : uint8_t {
     ADS1118 = 0,
     BNO085 = 1,
     ACTUATOR = 2,
+    NONE = 0xFF,
 };
 
 struct SpiClientConfig {
@@ -114,7 +115,7 @@ struct SpiClientConfig {
 };
 
 static const SpiClientConfig k_spi_cfg_ads = {CS_STEER_ANG, 2000000, SPI_MODE1, 10000};  // 100 Hz
-static const SpiClientConfig k_spi_cfg_imu = {CS_IMU,       1000000, SPI_MODE0,  5000};  // 200 Hz
+static SpiClientConfig k_spi_cfg_imu = {CS_IMU,       1000000, SPI_MODE3,  5000};  // 200 Hz
 static const SpiClientConfig k_spi_cfg_act = {CS_ACT,       1000000, SPI_MODE0,     0};  // event-driven
 
 static SemaphoreHandle_t s_spi_bus_mutex = nullptr;
@@ -123,6 +124,8 @@ struct SpiPollState {
     uint32_t next_due_us = 0;
     uint32_t deadline_miss = 0;
     uint32_t transactions = 0;
+    uint32_t last_us = 0;
+    uint32_t max_us = 0;
 };
 
 struct SpiBusTelemetry {
@@ -133,22 +136,37 @@ struct SpiBusTelemetry {
 
 static SpiPollState s_poll_imu;
 static SpiPollState s_poll_was;
+static SpiPollState s_poll_act;
 static SpiBusTelemetry s_bus_tm;
+static SpiClient s_last_spi_client = SpiClient::NONE;
+static uint32_t s_last_spi_end_us = 0;
+static SpiClient s_last_sensor_spi_client = SpiClient::NONE;
+static uint32_t s_last_sensor_spi_end_us = 0;
+static uint32_t s_client_switches = 0;
+static uint32_t s_was_to_imu_switches = 0;
+static uint32_t s_imu_to_was_switches = 0;
+static uint32_t s_other_switches = 0;
+static uint32_t s_was_to_imu_gap_last_us = 0;
+static uint32_t s_was_to_imu_gap_max_us = 0;
+static uint32_t s_imu_to_was_gap_last_us = 0;
+static uint32_t s_imu_to_was_gap_max_us = 0;
+static uint32_t s_sensor_was_to_imu_switches = 0;
+static uint32_t s_sensor_imu_to_was_switches = 0;
+static uint32_t s_sensor_was_to_imu_gap_last_us = 0;
+static uint32_t s_sensor_was_to_imu_gap_max_us = 0;
+static uint32_t s_sensor_imu_to_was_gap_last_us = 0;
+static uint32_t s_sensor_imu_to_was_gap_max_us = 0;
 
 static int16_t s_was_raw_cache = 0;
 static uint32_t s_was_last_poll_us = 0;
 static bool s_was_cache_valid = false;
-
-static float s_imu_yaw_cache = 0.0f;
-static float s_imu_roll_cache = 0.0f;
-static uint32_t s_imu_last_poll_us = 0;
-static bool s_imu_cache_valid = false;
 
 static const SpiClientConfig& spiCfg(SpiClient client) {
     switch (client) {
     case SpiClient::ADS1118: return k_spi_cfg_ads;
     case SpiClient::BNO085: return k_spi_cfg_imu;
     case SpiClient::ACTUATOR: return k_spi_cfg_act;
+    case SpiClient::NONE: break;
     }
     return k_spi_cfg_ads;
 }
@@ -165,12 +183,74 @@ static void spiEndCritical(void) {
     }
 }
 
+static SpiPollState& spiPollForClient(SpiClient client) {
+    switch (client) {
+    case SpiClient::ADS1118: return s_poll_was;
+    case SpiClient::BNO085: return s_poll_imu;
+    case SpiClient::ACTUATOR: return s_poll_act;
+    case SpiClient::NONE: break;
+    }
+    return s_poll_was;
+}
+
+static void updateLastMax(uint32_t& last_us, uint32_t& max_us, uint32_t value_us) {
+    last_us = value_us;
+    if (value_us > max_us) {
+        max_us = value_us;
+    }
+}
+
+static void spiRecordTiming(SpiClient client, uint32_t request_us, uint32_t lock_us, uint32_t end_us) {
+    const uint32_t dt_us = end_us - request_us;
+    SpiPollState& poll = spiPollForClient(client);
+    poll.transactions++;
+    poll.last_us = dt_us;
+    if (dt_us > poll.max_us) {
+        poll.max_us = dt_us;
+    }
+
+    s_bus_tm.busy_us += dt_us;
+    s_bus_tm.transactions++;
+
+    if (s_last_spi_client != SpiClient::NONE && s_last_spi_client != client) {
+        s_client_switches++;
+        const uint32_t switch_gap_us = s_last_spi_end_us == 0 ? 0 : (lock_us - s_last_spi_end_us);
+        if (s_last_spi_client == SpiClient::ADS1118 && client == SpiClient::BNO085) {
+            s_was_to_imu_switches++;
+            updateLastMax(s_was_to_imu_gap_last_us, s_was_to_imu_gap_max_us, switch_gap_us);
+        } else if (s_last_spi_client == SpiClient::BNO085 && client == SpiClient::ADS1118) {
+            s_imu_to_was_switches++;
+            updateLastMax(s_imu_to_was_gap_last_us, s_imu_to_was_gap_max_us, switch_gap_us);
+        } else {
+            s_other_switches++;
+        }
+    }
+    s_last_spi_client = client;
+    s_last_spi_end_us = end_us;
+
+    if (client == SpiClient::ADS1118 || client == SpiClient::BNO085) {
+        if (s_last_sensor_spi_client != SpiClient::NONE && s_last_sensor_spi_client != client) {
+            const uint32_t sensor_gap_us = s_last_sensor_spi_end_us == 0 ? 0 : (lock_us - s_last_sensor_spi_end_us);
+            if (s_last_sensor_spi_client == SpiClient::ADS1118 && client == SpiClient::BNO085) {
+                s_sensor_was_to_imu_switches++;
+                updateLastMax(s_sensor_was_to_imu_gap_last_us, s_sensor_was_to_imu_gap_max_us, sensor_gap_us);
+            } else if (s_last_sensor_spi_client == SpiClient::BNO085 && client == SpiClient::ADS1118) {
+                s_sensor_imu_to_was_switches++;
+                updateLastMax(s_sensor_imu_to_was_gap_last_us, s_sensor_imu_to_was_gap_max_us, sensor_gap_us);
+            }
+        }
+        s_last_sensor_spi_client = client;
+        s_last_sensor_spi_end_us = end_us;
+    }
+}
+
 static bool spiTransfer(SpiClient client, const uint8_t* tx, uint8_t* rx, size_t len) {
     const SpiClientConfig& cfg = spiCfg(client);
     if (len == 0) return true;
 
-    const uint32_t t0 = micros();
+    const uint32_t request_us = micros();
     spiBeginCritical();
+    const uint32_t lock_us = micros();
 
     digitalWrite(CS_STEER_ANG, HIGH);
     digitalWrite(CS_IMU, HIGH);
@@ -186,9 +266,8 @@ static bool spiTransfer(SpiClient client, const uint8_t* tx, uint8_t* rx, size_t
     sensorSPI.endTransaction();
 
     spiEndCritical();
-    const uint32_t dt = micros() - t0;
-    s_bus_tm.busy_us += dt;
-    s_bus_tm.transactions++;
+    const uint32_t end_us = micros();
+    spiRecordTiming(client, request_us, lock_us, end_us);
     return true;
 }
 
@@ -205,6 +284,36 @@ static void spiCheckDeadline(SpiPollState* poll, uint32_t period_us, uint32_t no
         poll->next_due_us += period_us;
     }
 }
+
+void hal_esp32_imu_spi_check_deadline(uint32_t period_us, uint32_t now_us) {
+    spiCheckDeadline(&s_poll_imu, period_us, now_us);
+}
+
+bool hal_esp32_imu_raw_transfer(const uint8_t* tx, uint8_t* rx, size_t len) {
+    return spiTransfer(SpiClient::BNO085, tx, rx, len);
+}
+
+uint32_t hal_esp32_sensor_spi_timing_now_us(void) {
+    return micros();
+}
+
+void hal_esp32_sensor_spi_lock(void) {
+    spiBeginCritical();
+}
+
+void hal_esp32_sensor_spi_unlock(void) {
+    spiEndCritical();
+}
+
+void hal_esp32_sensor_spi_record_imu_transfer(uint32_t request_us, uint32_t lock_us, uint32_t end_us) {
+    spiRecordTiming(SpiClient::BNO085, request_us, lock_us, end_us);
+}
+
+SPIClass& hal_esp32_sensor_spi_port(void) {
+    return sensorSPI;
+}
+
+void hal_imu_on_sensor_spi_reinit(void);
 
 // ===================================================================
 // Mutex (FreeRTOS recursive mutex) — for NavigationState protection
@@ -254,11 +363,66 @@ void hal_log(const char* fmt, ...) {
     std::vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
+    char category[20] = "LOG";
+    char detail[20] = "";
+    const char* body = buf;
+    const char* colon = std::strchr(buf, ':');
+    if (colon && colon != buf && (colon - buf) < 28) {
+        bool tag_ok = true;
+        for (const char* p = buf; p < colon; ++p) {
+            const char c = *p;
+            const bool alpha = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+            const bool digit = (c >= '0' && c <= '9');
+            if (!alpha && !digit && c != '_' && c != '-') {
+                tag_ok = false;
+                break;
+            }
+        }
+
+        if (tag_ok) {
+            const char* dash = nullptr;
+            for (const char* p = buf; p < colon; ++p) {
+                if (*p == '-') {
+                    dash = p;
+                    break;
+                }
+            }
+
+            const char* category_end = dash ? dash : colon;
+            size_t category_len = static_cast<size_t>(category_end - buf);
+            if (category_len >= sizeof(category)) category_len = sizeof(category) - 1;
+            for (size_t i = 0; i < category_len; ++i) {
+                const char c = buf[i];
+                category[i] = (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
+            }
+            category[category_len] = '\0';
+
+            if (dash && dash + 1 < colon) {
+                size_t detail_len = static_cast<size_t>(colon - dash - 1);
+                if (detail_len >= sizeof(detail)) detail_len = sizeof(detail) - 1;
+                for (size_t i = 0; i < detail_len; ++i) {
+                    const char c = dash[1 + i];
+                    detail[i] = (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
+                }
+                detail[detail_len] = '\0';
+            }
+
+            body = colon + 1;
+            while (*body == ' ') {
+                body++;
+            }
+        }
+    }
+
     // Protect Serial (USB CDC) from concurrent access across cores.
     if (s_log_mutex) {
         xSemaphoreTake(s_log_mutex, portMAX_DELAY);
     }
-    Serial.printf("[%10lu] %s\n", millis(), buf);
+    if (detail[0] != '\0') {
+        Serial.printf("[%s] [%10lu] %s: %s\n", category, millis(), detail, body);
+    } else {
+        Serial.printf("[%s] [%10lu] %s\n", category, millis(), body);
+    }
     if (s_log_mutex) {
         xSemaphoreGive(s_log_mutex);
     }
@@ -312,6 +476,26 @@ void hal_sensor_spi_init(void) {
     s_bus_tm.transactions = 0;
     s_poll_imu = {};
     s_poll_was = {};
+    s_poll_act = {};
+    s_last_spi_client = SpiClient::NONE;
+    s_last_spi_end_us = 0;
+    s_last_sensor_spi_client = SpiClient::NONE;
+    s_last_sensor_spi_end_us = 0;
+    s_client_switches = 0;
+    s_was_to_imu_switches = 0;
+    s_imu_to_was_switches = 0;
+    s_other_switches = 0;
+    s_was_to_imu_gap_last_us = 0;
+    s_was_to_imu_gap_max_us = 0;
+    s_imu_to_was_gap_last_us = 0;
+    s_imu_to_was_gap_max_us = 0;
+    s_sensor_was_to_imu_switches = 0;
+    s_sensor_imu_to_was_switches = 0;
+    s_sensor_was_to_imu_gap_last_us = 0;
+    s_sensor_was_to_imu_gap_max_us = 0;
+    s_sensor_imu_to_was_gap_last_us = 0;
+    s_sensor_imu_to_was_gap_max_us = 0;
+    s_was_cache_valid = false;
     hal_log("ESP32: sensor SPI initialised on FSPI/SPI2_HOST (SCK=%d MISO=%d MOSI=%d)",
             SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI);
 }
@@ -333,10 +517,36 @@ void hal_sensor_spi_reinit(void) {
     sensorSPI.end();
     delay(50);   // let SPI peripheral fully settle
     sensorSPI.begin(SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI, -1);
+    s_bus_tm.window_start_us = micros();
+    s_bus_tm.busy_us = 0;
+    s_bus_tm.transactions = 0;
+    s_poll_imu = {};
+    s_poll_was = {};
+    s_poll_act = {};
+    s_last_spi_client = SpiClient::NONE;
+    s_last_spi_end_us = 0;
+    s_last_sensor_spi_client = SpiClient::NONE;
+    s_last_sensor_spi_end_us = 0;
+    s_client_switches = 0;
+    s_was_to_imu_switches = 0;
+    s_imu_to_was_switches = 0;
+    s_other_switches = 0;
+    s_was_to_imu_gap_last_us = 0;
+    s_was_to_imu_gap_max_us = 0;
+    s_imu_to_was_gap_last_us = 0;
+    s_imu_to_was_gap_max_us = 0;
+    s_sensor_was_to_imu_switches = 0;
+    s_sensor_imu_to_was_switches = 0;
+    s_sensor_was_to_imu_gap_last_us = 0;
+    s_sensor_was_to_imu_gap_max_us = 0;
+    s_sensor_imu_to_was_gap_last_us = 0;
+    s_sensor_imu_to_was_gap_max_us = 0;
+    s_was_cache_valid = false;
     spiEndCritical();
     delay(10);   // let GPIO matrix reconfigure
     hal_log("ESP32: shared SPI re-initialised on FSPI/SPI2_HOST (SCK=%d MISO=%d MOSI=%d)",
             SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI);
+    hal_imu_on_sensor_spi_reinit();
 }
 
 void hal_sensor_spi_get_telemetry(HalSpiTelemetry* out) {
@@ -351,6 +561,27 @@ void hal_sensor_spi_get_telemetry(HalSpiTelemetry* out) {
     out->bus_transactions = s_bus_tm.transactions;
     out->imu_transactions = s_poll_imu.transactions;
     out->was_transactions = s_poll_was.transactions;
+    out->actuator_transactions = s_poll_act.transactions;
+    out->imu_last_us = s_poll_imu.last_us;
+    out->imu_max_us = s_poll_imu.max_us;
+    out->was_last_us = s_poll_was.last_us;
+    out->was_max_us = s_poll_was.max_us;
+    out->actuator_last_us = s_poll_act.last_us;
+    out->actuator_max_us = s_poll_act.max_us;
+    out->client_switches = s_client_switches;
+    out->was_to_imu_switches = s_was_to_imu_switches;
+    out->imu_to_was_switches = s_imu_to_was_switches;
+    out->other_switches = s_other_switches;
+    out->was_to_imu_gap_last_us = s_was_to_imu_gap_last_us;
+    out->was_to_imu_gap_max_us = s_was_to_imu_gap_max_us;
+    out->imu_to_was_gap_last_us = s_imu_to_was_gap_last_us;
+    out->imu_to_was_gap_max_us = s_imu_to_was_gap_max_us;
+    out->sensor_was_to_imu_switches = s_sensor_was_to_imu_switches;
+    out->sensor_imu_to_was_switches = s_sensor_imu_to_was_switches;
+    out->sensor_was_to_imu_gap_last_us = s_sensor_was_to_imu_gap_last_us;
+    out->sensor_was_to_imu_gap_max_us = s_sensor_was_to_imu_gap_max_us;
+    out->sensor_imu_to_was_gap_last_us = s_sensor_imu_to_was_gap_last_us;
+    out->sensor_imu_to_was_gap_max_us = s_sensor_imu_to_was_gap_max_us;
     out->imu_deadline_miss = s_poll_imu.deadline_miss;
     out->was_deadline_miss = s_poll_was.deadline_miss;
     if (win_us > 0) {
@@ -358,47 +589,24 @@ void hal_sensor_spi_get_telemetry(HalSpiTelemetry* out) {
     }
 }
 
-void hal_imu_begin(void) {
-    pinMode(CS_IMU, OUTPUT);
-    digitalWrite(CS_IMU, HIGH);
-    // TODO: Send BNO085 reset/initialise sequence over SPI
-    hal_log("ESP32: IMU begun on CS=%d (stub)", CS_IMU);
+void hal_imu_get_spi_info(HalImuSpiInfo* out) {
+    if (!out) return;
+    out->sck_pin = SENS_SPI_SCK;
+    out->miso_pin = SENS_SPI_MISO;
+    out->mosi_pin = SENS_SPI_MOSI;
+    out->cs_pin = CS_IMU;
+    out->int_pin = IMU_INT;
+    out->freq_hz = k_spi_cfg_imu.freq_hz;
+    out->mode = k_spi_cfg_imu.mode;
 }
 
-bool hal_imu_read(float* yaw_rate_dps, float* roll_deg) {
-    if (!yaw_rate_dps || !roll_deg) return false;
-    const uint32_t now_us = micros();
-    if (!s_imu_cache_valid || (now_us - s_imu_last_poll_us) >= k_spi_cfg_imu.period_us) {
-        spiCheckDeadline(&s_poll_imu, k_spi_cfg_imu.period_us, now_us);
-        uint8_t tx[4] = {0x00, 0x00, 0x00, 0x00};
-        uint8_t rx[4] = {0};
-        spiTransfer(SpiClient::BNO085, tx, rx, sizeof(tx));
-        s_imu_yaw_cache = 0.0f;   // TODO: decode SH-2 payload
-        s_imu_roll_cache = 0.0f;  // TODO: decode SH-2 payload
-        s_imu_last_poll_us = now_us;
-        s_imu_cache_valid = true;
-        s_poll_imu.transactions++;
-    }
-    *yaw_rate_dps = s_imu_yaw_cache;
-    *roll_deg = s_imu_roll_cache;
-    return true;
-}
-
-bool hal_imu_detect(void) {
-    // BNO085 detection: read chip ID from register 0x00
-    // Expected chip ID: 0x00 (BNO085 responds to SPI reset)
-    // For now, verify SPI bus is responsive by attempting a transfer
-    uint8_t tx = 0x00;
-    uint8_t response = 0;
-    spiTransfer(SpiClient::BNO085, &tx, &response, 1);
-
-    // 0xFF = floating MISO (no device pulling it down)
-    // 0x00 = MISO stuck LOW (bus fault)
-    // A real BNO085 would respond with its chip ID.
-    bool detected = (response != 0xFF && response != 0x00);
-    hal_log("ESP32: IMU detect: SPI response=0x%02X %s",
-            response, detected ? "OK" : "FAIL (no device)");
-    return detected;
+void hal_imu_set_spi_config(uint32_t freq_hz, uint8_t mode) {
+    if (freq_hz == 0) return;
+    k_spi_cfg_imu.freq_hz = freq_hz;
+    k_spi_cfg_imu.mode = mode;
+    hal_log("ESP32: IMU SPI config set (freq=%luHz mode=%u)",
+            (unsigned long)k_spi_cfg_imu.freq_hz,
+            (unsigned)k_spi_cfg_imu.mode);
 }
 
 // ===================================================================
@@ -497,7 +705,6 @@ static int16_t ads1118_read_raw(void) {
     s_was_raw_cache = static_cast<int16_t>((static_cast<uint16_t>(rx[0]) << 8) | rx[1]);
     s_was_last_poll_us = now_us;
     s_was_cache_valid = true;
-    s_poll_was.transactions++;
     return s_was_raw_cache;
 }
 
@@ -788,6 +995,7 @@ void hal_steer_angle_calibrate(void) {
 }
 
 float hal_steer_angle_read_deg(void) {
+
     if (!s_ads1118_detected || !s_calibrated) {
         return 0.0f;  // Not detected or not calibrated — return neutral
     }
@@ -813,11 +1021,28 @@ float hal_steer_angle_read_deg(void) {
 }
 
 int16_t hal_steer_angle_read_raw(void) {
+
     if (!s_ads1118_detected || !s_calibrated) return 0;
     return ads1118_read_raw();
 }
 
+uint8_t hal_steer_angle_read_sensor_byte(void) {
+    if (!s_ads1118_detected) return 0;
+
+    const int16_t raw = ads1118_read_raw();
+    const int16_t span = s_cal_right_raw - s_cal_left_raw;
+    if (s_calibrated && span != 0) {
+        float normalised = static_cast<float>(raw - s_cal_left_raw) / static_cast<float>(span);
+        if (normalised < 0.0f) normalised = 0.0f;
+        if (normalised > 1.0f) normalised = 1.0f;
+        return static_cast<uint8_t>((normalised * 255.0f) + 0.5f);
+    }
+
+    return static_cast<uint8_t>(raw & 0xFF);
+}
+
 bool hal_steer_angle_is_calibrated(void) {
+
     return s_calibrated;
 }
 
@@ -1014,7 +1239,7 @@ bool hal_net_detected(void) {
 // ===================================================================
 // ESP32 init all
 // ===================================================================
-void hal_esp32_init_all(void) {
+static void hal_esp32_common_boot_init(void) {
     // Serial
     Serial.begin(115200);
     uint32_t serial_start = millis();
@@ -1037,6 +1262,21 @@ void hal_esp32_init_all(void) {
 
     // SPI sensor bus (FSPI / SPI2_HOST) - SCK=16, MISO=15, MOSI=17
     hal_sensor_spi_init();
+}
+
+void hal_esp32_init_imu_bringup(void) {
+    hal_esp32_common_boot_init();
+
+    // IMU + steering-angle ADC for SPI cross-device diagnostics.
+    // Keep actuator/network disabled in bring-up mode.
+    hal_imu_begin();
+    hal_imu_reset_pulse(10, 20);
+    hal_steer_angle_begin();
+    hal_log("ESP32: IMU bring-up HAL init complete (ADS enabled, actuator/network skipped)");
+}
+
+void hal_esp32_init_all(void) {
+    hal_esp32_common_boot_init();
 
     // IMU, steer angle, actuator
     hal_imu_begin();

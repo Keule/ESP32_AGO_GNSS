@@ -26,6 +26,7 @@
 #include "pgn_registry.h"
 #include "modules.h"
 #include "control.h"
+#include "dependency_policy.h"
 #include "global_state.h"
 #include "hal/hal.h"
 
@@ -42,6 +43,8 @@
 constexpr uint8_t STATUS_BIT_WORK_SWITCH   = 0x01;  // bit 0
 constexpr uint8_t STATUS_BIT_STEER_SWITCH  = 0x02;  // bit 1
 constexpr uint8_t STATUS_BIT_STEER_ON      = 0x04;  // bit 2
+constexpr int16_t STEER_STATUS_HEADING_INVALID_X10 = 9999;
+constexpr int16_t STEER_STATUS_ROLL_INVALID_X10 = 8888;
 
 // ===================================================================
 // Send interval tracking
@@ -52,6 +55,20 @@ static const uint32_t SEND_INTERVAL_MS = 100;  // 10 Hz
 // Rate-limit log messages to avoid serial spam from broadcast echo
 static uint32_t s_last_invalid_log_ms = 0;
 static uint32_t s_last_unhandled_log_ms = 0;
+
+static int16_t scaleToInt16(float value, float scale) {
+    const float scaled = value * scale;
+    if (scaled > 32767.0f) return 32767;
+    if (scaled < -32768.0f) return -32768;
+    return static_cast<int16_t>(scaled);
+}
+
+static uint8_t pidOutputToPwmDisplay(uint16_t pid_output, bool settings_received) {
+    if (settings_received) {
+        return pid_output > 255u ? 255u : static_cast<uint8_t>(pid_output);
+    }
+    return static_cast<uint8_t>((static_cast<uint32_t>(pid_output) * 255u) / 65535u);
+}
 
 // ===================================================================
 // Network config instance (defined here, declared in pgn_types.h)
@@ -264,7 +281,11 @@ void netSendAogFrames(void) {
         bool work_switch = false;
         bool steer_switch = false;
         uint16_t pid_output = 0;
-        int16_t steer_angle_raw = 0;
+        bool settings_received = false;
+        uint32_t imu_timestamp_ms = 0;
+        bool imu_quality_ok = false;
+        uint32_t heading_timestamp_ms = 0;
+        bool heading_quality_ok = false;
     } snap;
 
     // Input phase: take one consistent state snapshot.
@@ -277,22 +298,35 @@ void netSendAogFrames(void) {
         snap.work_switch = g_nav.work_switch;
         snap.steer_switch = g_nav.steer_switch;
         snap.pid_output = g_nav.pid_output;
-        snap.steer_angle_raw = g_nav.steer_angle_raw;
+        snap.settings_received = g_nav.settings_received;
+        snap.imu_timestamp_ms = g_nav.imu_timestamp_ms;
+        snap.imu_quality_ok = g_nav.imu_quality_ok;
+        snap.heading_timestamp_ms = g_nav.heading_timestamp_ms;
+        snap.heading_quality_ok = g_nav.heading_quality_ok;
     }
 
     // Processing phase: encode payloads from snapshot.
     uint8_t tx_buf[aog_frame::MAX_FRAME];
     size_t tx_len = 0;
-    const int16_t angle_x100 = static_cast<int16_t>(snap.steer_angle_deg * 100.0f);
-    const int16_t heading_x10 = static_cast<int16_t>(snap.heading_deg * 10.0f);
-    const int16_t roll_x10 = static_cast<int16_t>(snap.roll_deg * 10.0f);
+    const int16_t angle_x100 = scaleToInt16(snap.steer_angle_deg, 100.0f);
+    const bool imu_valid =
+        dep_policy::isImuInputValid(now, snap.imu_timestamp_ms, snap.imu_quality_ok);
+    const bool heading_valid =
+        dep_policy::isFresh(now, snap.heading_timestamp_ms, dep_policy::IMU_FRESHNESS_TIMEOUT_MS) &&
+        snap.heading_quality_ok;
+    const int16_t heading_x10 = heading_valid
+        ? scaleToInt16(snap.heading_deg, 10.0f)
+        : STEER_STATUS_HEADING_INVALID_X10;
+    const int16_t roll_x10 = imu_valid
+        ? scaleToInt16(snap.roll_deg, 10.0f)
+        : STEER_STATUS_ROLL_INVALID_X10;
 
     uint8_t switch_st = 0;
     if (!snap.safety_ok)  switch_st |= 0x80;
     if (snap.work_switch) switch_st |= 0x01;
     if (snap.steer_switch) switch_st |= 0x02;
 
-    const uint8_t pwm_disp = static_cast<uint8_t>((snap.pid_output * 255.0f) / 65535.0f);
+    const uint8_t pwm_disp = pidOutputToPwmDisplay(snap.pid_output, snap.settings_received);
 
     // Output phase: network sends happen outside of state lock.
     tx_len = pgnEncodeSteerStatusOut(tx_buf, sizeof(tx_buf),
@@ -302,7 +336,7 @@ void netSendAogFrames(void) {
         hal_net_send(tx_buf, tx_len, aog_port::STEER);
     }
 
-    const uint8_t sensor_val = static_cast<uint8_t>(snap.steer_angle_raw & 0xFF);
+    const uint8_t sensor_val = hal_steer_angle_read_sensor_byte();
     tx_len = pgnEncodeFromAutosteer2(tx_buf, sizeof(tx_buf), sensor_val);
     if (tx_len > 0) {
         hal_net_send(tx_buf, tx_len, aog_port::STEER);

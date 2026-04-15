@@ -18,6 +18,7 @@ bool isFresh(uint32_t now_ms, uint32_t sample_ts_ms, uint32_t timeout_ms);
 bool isSteerAnglePlausible(float angle_deg);
 bool isSteerAngleRawPlausible(int16_t raw_value);
 bool isImuPlausible(float yaw_rate_dps, float roll_deg);
+bool isHeadingPlausible(float heading_deg);
 
 bool isSteerAngleInputValid(uint32_t now_ms,
                             uint32_t sample_ts_ms,

@@ -64,9 +64,52 @@ typedef struct {
     uint32_t bus_busy_us;
     uint32_t imu_transactions;
     uint32_t was_transactions;
+    uint32_t actuator_transactions;
+    uint32_t imu_last_us;
+    uint32_t imu_max_us;
+    uint32_t was_last_us;
+    uint32_t was_max_us;
+    uint32_t actuator_last_us;
+    uint32_t actuator_max_us;
+    uint32_t client_switches;
+    uint32_t was_to_imu_switches;
+    uint32_t imu_to_was_switches;
+    uint32_t other_switches;
+    uint32_t was_to_imu_gap_last_us;
+    uint32_t was_to_imu_gap_max_us;
+    uint32_t imu_to_was_gap_last_us;
+    uint32_t imu_to_was_gap_max_us;
+    uint32_t sensor_was_to_imu_switches;
+    uint32_t sensor_imu_to_was_switches;
+    uint32_t sensor_was_to_imu_gap_last_us;
+    uint32_t sensor_was_to_imu_gap_max_us;
+    uint32_t sensor_imu_to_was_gap_last_us;
+    uint32_t sensor_imu_to_was_gap_max_us;
     uint32_t imu_deadline_miss;
     uint32_t was_deadline_miss;
 } HalSpiTelemetry;
+
+/// Static IMU SPI wiring/configuration info for diagnostics/bring-up logs.
+typedef struct {
+    int sck_pin;
+    int miso_pin;
+    int mosi_pin;
+    int cs_pin;
+    int int_pin;
+    uint32_t freq_hz;
+    uint8_t mode;
+} HalImuSpiInfo;
+
+/// Boot-time IMU detection statistics (multi-sample qualification).
+typedef struct {
+    uint16_t samples;
+    uint16_t ok_count;
+    uint16_t ff_count;
+    uint16_t zero_count;
+    uint16_t other_count;
+    uint8_t last_response;
+    bool present;
+} HalImuDetectStats;
 
 /// Initialise SPI bus 2 (sensor bus) and all chip selects.
 void hal_sensor_spi_init(void);
@@ -87,12 +130,28 @@ void hal_sensor_spi_get_telemetry(HalSpiTelemetry* out);
 /// Initialise IMU on SPI.
 void hal_imu_begin(void);
 
-/// Read yaw rate and roll from IMU. Returns true on success.
-bool hal_imu_read(float* yaw_rate_dps, float* roll_deg);
+/// Read yaw rate, roll, and heading from IMU. Returns true on success.
+bool hal_imu_read(float* yaw_rate_dps, float* roll_deg, float* heading_deg);
 
 /// Detect if IMU chip is present on SPI bus (call after hal_imu_begin).
 /// Performs a chip ID read to verify hardware responds.
 bool hal_imu_detect(void);
+
+/// Pulse IMU reset line (active LOW) for bring-up diagnostics.
+void hal_imu_reset_pulse(uint32_t low_ms, uint32_t settle_ms);
+
+/// Boot-time qualified IMU detection.
+/// Performs multiple samples and classifies responses.
+bool hal_imu_detect_boot_qualified(HalImuDetectStats* out);
+
+/// Return IMU SPI pin mapping + SPI settings used by HAL.
+void hal_imu_get_spi_info(HalImuSpiInfo* out);
+
+/// Override IMU SPI bus parameters at runtime (bring-up diagnostics).
+void hal_imu_set_spi_config(uint32_t freq_hz, uint8_t mode);
+
+/// Perform one raw IMU SPI probe transfer and return response byte.
+bool hal_imu_probe_once(uint8_t* out_response);
 
 // --- Steering Angle Sensor ---
 
@@ -120,6 +179,10 @@ float hal_steer_angle_read_deg(void);
 /// Read raw 16-bit ADC value from ADS1118 (single sample, no median).
 /// Returns 0 if not detected or not calibrated.
 int16_t hal_steer_angle_read_raw(void);
+
+/// Read the PGN 250 compatible 8-bit steer sensor value.
+/// Calibrated sensors are scaled to 0..255; uncalibrated sensors use raw low byte.
+uint8_t hal_steer_angle_read_sensor_byte(void);
 
 // --- Actuator ---
 

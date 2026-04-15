@@ -8,8 +8,10 @@
  *   - commTask  (Core 0): Ethernet/UDP, AOG protocol, HW status
  *   - controlTask (Core 1): 200 Hz control loop, PID, safety, actuators
  *
- * NOTE: All hardware init is done in hal_esp32_init_all() during setup().
- *       The tasks do NOT re-initialize anything.
+ * NOTE: Hardware init is done in setup():
+ *       - normal mode: hal_esp32_init_all()
+ *       - IMU bring-up mode: hal_esp32_init_imu_bringup()
+ *       Tasks do NOT re-initialize anything.
  */
 
 #include <Arduino.h>
@@ -24,6 +26,7 @@
 #include "logic/features.h"
 #include "logic/global_state.h"
 #include "logic/hw_status.h"
+#include "logic/imu.h"
 #include "logic/modules.h"
 #include "logic/net.h"
 #include "logic/sd_ota.h"
@@ -40,6 +43,7 @@
 // ===================================================================
 static TaskHandle_t s_control_task_handle = nullptr;
 static TaskHandle_t s_comm_task_handle = nullptr;
+static bool s_imu_bringup_active = false;
 
 // ===================================================================
 // Runtime/Debug logging knobs
@@ -96,16 +100,37 @@ static void controlTaskFunc(void* param) {
         }
 
         const uint32_t now_ms = hal_millis();
-        if (now_ms - last_spi_tm_ms >= 5000) {
+        if (LOG_SPI_TIMING_INTERVAL_MS > 0 && now_ms - last_spi_tm_ms >= LOG_SPI_TIMING_INTERVAL_MS) {
             last_spi_tm_ms = now_ms;
             HalSpiTelemetry tm = {};
             hal_sensor_spi_get_telemetry(&tm);
-            hal_log("SPI: util=%.1f%% bus_tx=%lu busy=%luus imu_tx=%lu was_tx=%lu miss(imu=%lu was=%lu)",
+            hal_log("SPI: util=%.1f%% bus_tx=%lu busy=%luus was_us=%lu/%lu imu_us=%lu/%lu act_us=%lu/%lu tx(was=%lu imu=%lu act=%lu) sw=%lu(wi=%lu iw=%lu oth=%lu) sw_gap_us(wi=%lu/%lu iw=%lu/%lu) sens_sw(wi=%lu iw=%lu) sens_gap_us(wi=%lu/%lu iw=%lu/%lu) miss(imu=%lu was=%lu)",
                     tm.bus_utilization_pct,
                     (unsigned long)tm.bus_transactions,
                     (unsigned long)tm.bus_busy_us,
-                    (unsigned long)tm.imu_transactions,
+                    (unsigned long)tm.was_last_us,
+                    (unsigned long)tm.was_max_us,
+                    (unsigned long)tm.imu_last_us,
+                    (unsigned long)tm.imu_max_us,
+                    (unsigned long)tm.actuator_last_us,
+                    (unsigned long)tm.actuator_max_us,
                     (unsigned long)tm.was_transactions,
+                    (unsigned long)tm.imu_transactions,
+                    (unsigned long)tm.actuator_transactions,
+                    (unsigned long)tm.client_switches,
+                    (unsigned long)tm.was_to_imu_switches,
+                    (unsigned long)tm.imu_to_was_switches,
+                    (unsigned long)tm.other_switches,
+                    (unsigned long)tm.was_to_imu_gap_last_us,
+                    (unsigned long)tm.was_to_imu_gap_max_us,
+                    (unsigned long)tm.imu_to_was_gap_last_us,
+                    (unsigned long)tm.imu_to_was_gap_max_us,
+                    (unsigned long)tm.sensor_was_to_imu_switches,
+                    (unsigned long)tm.sensor_imu_to_was_switches,
+                    (unsigned long)tm.sensor_was_to_imu_gap_last_us,
+                    (unsigned long)tm.sensor_was_to_imu_gap_max_us,
+                    (unsigned long)tm.sensor_imu_to_was_gap_last_us,
+                    (unsigned long)tm.sensor_imu_to_was_gap_max_us,
                     (unsigned long)tm.imu_deadline_miss,
                     (unsigned long)tm.was_deadline_miss);
         }
@@ -181,16 +206,20 @@ static void commTaskFunc(void* param) {
 
             const bool steer_angle_valid =
                 dep_policy::isSteerAngleInputValid(now, steer_ts_ms, steer_quality_ok);
-            const bool imu_valid =
-                dep_policy::isImuInputValid(now, imu_ts_ms, imu_quality_ok);
+            const ModuleHwStatus* hw = modulesGetHwStatus();
+            const bool imu_hw_detected = hw ? hw->imu_detected : false;
+            const bool imu_data_valid =
+                imu_hw_detected && dep_policy::isImuInputValid(now, imu_ts_ms, imu_quality_ok);
 
             // Hardware status monitoring via hw_status subsystem
             uint8_t err_count = hwStatusUpdate(
                 hal_net_is_connected(),     // Ethernet connected
                 safety_ok,                  // Safety circuit OK
                 steer_angle_valid,          // steer angle freshness + plausibility
-                imu_valid                   // IMU freshness + plausibility
+                imu_hw_detected             // IMU hardware presence; data quality remains in g_nav
             );
+
+            (void)imu_data_valid;
 
             // Log only on count changes, plus occasional reminders.
             bool changed = (err_count != last_hw_err_count);
@@ -216,8 +245,14 @@ static void commTaskFunc(void* param) {
 // Arduino setup()
 // ===================================================================
 void setup() {
-    // Initialise ALL hardware (mutex, safety, SPI, sensors, W5500)
-    hal_esp32_init_all();
+    s_imu_bringup_active = imuBringupModeEnabled();
+    if (s_imu_bringup_active) {
+        // Explicit bring-up path: no actuator or network dependency.
+        hal_esp32_init_imu_bringup();
+    } else {
+        // Normal operation path.
+        hal_esp32_init_all();
+    }
 
     // -----------------------------------------------------------------
     // Firmware Version & Build Info (always printed)
@@ -232,6 +267,11 @@ void setup() {
                 part ? (unsigned)part->address : 0);
         hal_log("  Flash: %d KB free", (int)(ESP.getFreeSketchSpace() / 1024));
         hal_log("========================================");
+    }
+    if (s_imu_bringup_active) {
+        hal_log("Main: IMU bring-up mode active (FEAT_IMU_BRINGUP).");
+        imuBringupInit();
+        return;
     }
 
     // -----------------------------------------------------------------
@@ -373,6 +413,12 @@ void setup() {
 static uint32_t s_loop_dbg_count = 0;
 
 void loop() {
+    if (s_imu_bringup_active) {
+        imuBringupTick();
+        vTaskDelay(pdMS_TO_TICKS(20));
+        return;
+    }
+
     // Feed watchdog to prevent trigger from this task
     esp_task_wdt_reset();
 

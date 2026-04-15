@@ -176,6 +176,17 @@ bool pgnChecksumSelfTest(void) {
     rx[tx_len - 1] ^= 0xFF;
     if (pgnValidateFrame(rx, tx_len, &v_src, &v_pgn, &v_pay, &v_plen)) return false;
 
+    // PGN 250 keeps an 8-byte payload for AgOpenGPS compatibility.
+    tx_len = pgnEncodeFromAutosteer2(tx, sizeof(tx), 127);
+    if (tx_len != 14) return false;
+    if (!pgnValidateFrame(tx, tx_len, &v_src, &v_pgn, &v_pay, &v_plen)) return false;
+    if (v_src != aog_src::STEER || v_pgn != aog_pgn::FROM_AUTOSTEER_2 || v_plen != 8)
+        return false;
+    if (v_pay[0] != 127) return false;
+    for (size_t i = 1; i < 8; i++) {
+        if (v_pay[i] != 0) return false;
+    }
+
     // Test: Discovery PGN 200 (Hello from AgIO) with WRONG checksum
     // AgIO sends: [0x80, 0x81, 0x7F, 200, 3, 56, 0, 0, 0x47]
     // The trailing byte 0x47 does NOT match the additive checksum (0x88),

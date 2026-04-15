@@ -36,7 +36,7 @@ void hal_sensor_spi_deinit(void) {}
 void hal_sensor_spi_reinit(void) {}
 void hal_sensor_spi_get_telemetry(HalSpiTelemetry*) {}
 void hal_imu_begin(void) {}
-bool hal_imu_read(float*, float*) { return false; }
+bool hal_imu_read(float*, float*, float*) { return false; }
 bool hal_imu_detect(void) { return false; }
 void hal_steer_angle_begin(void) {}
 bool hal_steer_angle_detect(void) { return false; }
@@ -44,6 +44,7 @@ void hal_steer_angle_calibrate(void) {}
 bool hal_steer_angle_is_calibrated(void) { return false; }
 float hal_steer_angle_read_deg(void) { return 0.0f; }
 int16_t hal_steer_angle_read_raw(void) { return 0; }
+uint8_t hal_steer_angle_read_sensor_byte(void) { return 0; }
 void hal_actuator_begin(void) {}
 void hal_actuator_write(uint16_t) {}
 bool hal_actuator_detect(void) { return false; }

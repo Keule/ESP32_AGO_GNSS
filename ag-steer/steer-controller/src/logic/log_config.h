@@ -47,3 +47,18 @@
 // ── Laufzeit-Features (auf 0 setzen spart RAM) ──
 #define LOG_FILTER_ENABLED   1   // "filter net.cpp:47" Kommando
 #define LOG_SERIAL_CMD       1   // Serial-Eingabe "log ..." verarbeiten
+
+// Compile-time diagnostic print intervals.
+// Override via PlatformIO build_flags, e.g. -DLOG_IMU_DIAG_INTERVAL_MS=100.
+// Set to 0 to disable the corresponding periodic diagnostic log.
+#ifndef LOG_IMU_DIAG_INTERVAL_MS
+#define LOG_IMU_DIAG_INTERVAL_MS 500
+#endif
+
+#ifndef LOG_WAS_DIAG_INTERVAL_MS
+#define LOG_WAS_DIAG_INTERVAL_MS 0
+#endif
+
+#ifndef LOG_SPI_TIMING_INTERVAL_MS
+#define LOG_SPI_TIMING_INTERVAL_MS 5000
+#endif
