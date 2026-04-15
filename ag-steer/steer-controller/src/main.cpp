@@ -100,16 +100,37 @@ static void controlTaskFunc(void* param) {
         }
 
         const uint32_t now_ms = hal_millis();
-        if (now_ms - last_spi_tm_ms >= 5000) {
+        if (LOG_SPI_TIMING_INTERVAL_MS > 0 && now_ms - last_spi_tm_ms >= LOG_SPI_TIMING_INTERVAL_MS) {
             last_spi_tm_ms = now_ms;
             HalSpiTelemetry tm = {};
             hal_sensor_spi_get_telemetry(&tm);
-            hal_log("SPI: util=%.1f%% bus_tx=%lu busy=%luus imu_tx=%lu was_tx=%lu miss(imu=%lu was=%lu)",
+            hal_log("SPI: util=%.1f%% bus_tx=%lu busy=%luus was_us=%lu/%lu imu_us=%lu/%lu act_us=%lu/%lu tx(was=%lu imu=%lu act=%lu) sw=%lu(wi=%lu iw=%lu oth=%lu) sw_gap_us(wi=%lu/%lu iw=%lu/%lu) sens_sw(wi=%lu iw=%lu) sens_gap_us(wi=%lu/%lu iw=%lu/%lu) miss(imu=%lu was=%lu)",
                     tm.bus_utilization_pct,
                     (unsigned long)tm.bus_transactions,
                     (unsigned long)tm.bus_busy_us,
-                    (unsigned long)tm.imu_transactions,
+                    (unsigned long)tm.was_last_us,
+                    (unsigned long)tm.was_max_us,
+                    (unsigned long)tm.imu_last_us,
+                    (unsigned long)tm.imu_max_us,
+                    (unsigned long)tm.actuator_last_us,
+                    (unsigned long)tm.actuator_max_us,
                     (unsigned long)tm.was_transactions,
+                    (unsigned long)tm.imu_transactions,
+                    (unsigned long)tm.actuator_transactions,
+                    (unsigned long)tm.client_switches,
+                    (unsigned long)tm.was_to_imu_switches,
+                    (unsigned long)tm.imu_to_was_switches,
+                    (unsigned long)tm.other_switches,
+                    (unsigned long)tm.was_to_imu_gap_last_us,
+                    (unsigned long)tm.was_to_imu_gap_max_us,
+                    (unsigned long)tm.imu_to_was_gap_last_us,
+                    (unsigned long)tm.imu_to_was_gap_max_us,
+                    (unsigned long)tm.sensor_was_to_imu_switches,
+                    (unsigned long)tm.sensor_imu_to_was_switches,
+                    (unsigned long)tm.sensor_was_to_imu_gap_last_us,
+                    (unsigned long)tm.sensor_was_to_imu_gap_max_us,
+                    (unsigned long)tm.sensor_imu_to_was_gap_last_us,
+                    (unsigned long)tm.sensor_imu_to_was_gap_max_us,
                     (unsigned long)tm.imu_deadline_miss,
                     (unsigned long)tm.was_deadline_miss);
         }
@@ -269,16 +290,12 @@ void setup() {
     // the SD card before booting.
     // -----------------------------------------------------------------
     {
-#if defined(BNO085_EXCLUSIVE_SPI_TEST)
-        hal_log("Main: SD OTA check skipped (BNO085_EXCLUSIVE_SPI_TEST keeps FSPI on IMU pins)");
-#else
         if (isFirmwareUpdateAvailableOnSD()) {
             hal_log("Main: firmware update detected on SD card – starting update");
             updateFirmwareFromSD();
             // If we reach here the update failed – continue with old firmware
             hal_log("Main: OTA update FAILED, continuing with current firmware");
         }
-#endif
     }
 
     // Initialise module system – detect hardware for all modules
@@ -351,13 +368,9 @@ void setup() {
     // The logger runs as a low-priority FreeRTOS task that periodically
     // drains a ring buffer to the SD card (every 2 seconds).
     // -----------------------------------------------------------------
-#if defined(BNO085_EXCLUSIVE_SPI_TEST)
-    hal_log("Main: SD logger skipped (BNO085_EXCLUSIVE_SPI_TEST keeps FSPI on IMU pins)");
-#else
     if (feat::control()) {
         sdLoggerInit();
     }
-#endif
 
     // Report initial hardware errors
     // Always call – reportError() will use UDP if network is up,

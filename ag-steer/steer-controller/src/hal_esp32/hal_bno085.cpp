@@ -11,13 +11,27 @@
 #include <BnoSPIBus.h>
 #include <SPI.h>
 
+#include "logic/log_config.h"
+
+#ifndef LOG_IMU_DIAG_INTERVAL_MS
+#define LOG_IMU_DIAG_INTERVAL_MS 500
+#endif
+
 SPIClass& hal_esp32_sensor_spi_port(void);
+uint32_t hal_esp32_sensor_spi_timing_now_us(void);
+void hal_esp32_sensor_spi_lock(void);
+void hal_esp32_sensor_spi_unlock(void);
+void hal_esp32_sensor_spi_record_imu_transfer(uint32_t request_us, uint32_t lock_us, uint32_t end_us);
 
 namespace {
 
-constexpr uint32_t kBno085SpiHz = 3000000UL;
-constexpr uint16_t kBno085PeriodMs = 20;
+constexpr uint32_t kBno085SpiHz = 6000000UL;
+constexpr uint16_t kBno085GamePeriodMs = 10;
+constexpr uint16_t kBno085GeoPeriodMs = 50;
+constexpr uint32_t kHeadingBootMs = 2500;
+constexpr uint16_t kHeadingBootMinSamples = 10;
 constexpr float kRadToDeg = 57.2957795f;
+constexpr float kDegToRad = 0.0174532925f;
 
 BnoSPIBus* s_bno_bus = nullptr;
 BNO08x_7Semi* s_bno08x = nullptr;
@@ -28,15 +42,29 @@ bool s_reports_enabled = false;
 bool s_imu_cache_valid = false;
 float s_imu_yaw_cache = 0.0f;
 float s_imu_roll_cache = 0.0f;
+float s_imu_heading_cache = 0.0f;
+float s_game_yaw_cache = 0.0f;
+float s_geo_yaw_cache = 0.0f;
 float s_imu_acc_x_cache = 0.0f;
 float s_imu_acc_y_cache = 0.0f;
 float s_imu_acc_z_cache = 0.0f;
 uint32_t s_imu_last_data_us = 0;
+uint32_t s_heading_boot_start_ms = 0;
+uint32_t s_heading_last_us = 0;
 uint32_t s_last_diag_log_ms = 0;
 uint32_t s_diag_read_ok = 0;
 uint32_t s_diag_read_wait = 0;
 uint32_t s_spi_recover_count = 0;
 uint32_t s_diag_packet_count = 0;
+uint16_t s_heading_boot_samples = 0;
+float s_heading_boot_sin = 0.0f;
+float s_heading_boot_cos = 0.0f;
+float s_heading_boot_mag_deg = 0.0f;
+float s_heading_boot_game_deg = 0.0f;
+bool s_game_yaw_valid = false;
+bool s_geo_yaw_valid = false;
+bool s_geo_yaw_new = false;
+bool s_heading_ready = false;
 
 void prepareChipSelects() {
     pinMode(CS_STEER_ANG, OUTPUT);
@@ -58,22 +86,31 @@ bool enableRuntimeReports() {
         delay(10);
     }
 
-    const bool acc_ok = s_bno08x->enableAcc(kBno085PeriodMs);
-    const bool gyro_ok = s_bno08x->enableGyro(kBno085PeriodMs);
-    const bool mag_ok = s_bno08x->enableMag(50);
-    const bool rot_ok = s_bno08x->enableRotationVector(kBno085PeriodMs);
-    const bool lin_ok = s_bno08x->enableLinearAccel(kBno085PeriodMs);
+    const bool geo_ok = s_bno08x->enableGeoRotationVector(kBno085GeoPeriodMs);
+    const bool game_ok = s_bno08x->enableGameRotationVector(kBno085GamePeriodMs);
 
+    // Some firmware replies do not match the library's SetFeature ACK parser.
+    // Keep polling after requests; actual data freshness decides runtime quality.
     s_reports_enabled = true;
     s_imu_cache_valid = false;
+    s_game_yaw_valid = false;
+    s_geo_yaw_valid = false;
+    s_geo_yaw_new = false;
+    s_heading_ready = false;
+    s_heading_boot_start_ms = millis();
+    s_heading_boot_samples = 0;
+    s_heading_boot_sin = 0.0f;
+    s_heading_boot_cos = 0.0f;
     s_imu_last_data_us = 0;
-    hal_log("ESP32: 7Semi BNO085 reports requested acc=%s gyro=%s mag=%s rotation=%s linear=%s poll=%s",
-            acc_ok ? "OK" : "FAIL",
-            gyro_ok ? "OK" : "FAIL",
-            mag_ok ? "OK" : "FAIL",
-            rot_ok ? "OK" : "FAIL",
-            lin_ok ? "OK" : "FAIL",
-            s_reports_enabled ? "ON" : "OFF");
+    s_heading_last_us = 0;
+    hal_log("ESP32: 7Semi BNO085 reports requested geo=%s/%ums game=%s/%ums poll=%s (boot_heading=%lums/%u samples)",
+            geo_ok ? "OK" : "NOACK",
+            (unsigned)kBno085GeoPeriodMs,
+            game_ok ? "OK" : "NOACK",
+            (unsigned)kBno085GamePeriodMs,
+            s_reports_enabled ? "ON" : "OFF",
+            (unsigned long)kHeadingBootMs,
+            (unsigned)kHeadingBootMinSamples);
     return s_reports_enabled;
 }
 
@@ -113,6 +150,57 @@ float rollDegFromQuaternion(float i, float j, float k, float real) {
     const float t0 = 2.0f * ((real * i) + (j * k));
     const float t1 = 1.0f - (2.0f * ((i * i) + (j * j)));
     return atan2f(t0, t1) * kRadToDeg;
+}
+
+float normalize360(float deg) {
+    while (deg >= 360.0f) deg -= 360.0f;
+    while (deg < 0.0f) deg += 360.0f;
+    return deg;
+}
+
+float deltaDeg(float current, float reference) {
+    float d = current - reference;
+    while (d > 180.0f) d -= 360.0f;
+    while (d < -180.0f) d += 360.0f;
+    return d;
+}
+
+float yawDegFromQuaternion(float i, float j, float k, float real) {
+    const float norm = sqrtf((real * real) + (i * i) + (j * j) + (k * k));
+    if (norm <= 0.0f) return 0.0f;
+
+    real /= norm;
+    i /= norm;
+    j /= norm;
+    k /= norm;
+
+    const float t0 = 2.0f * ((real * k) + (i * j));
+    const float t1 = 1.0f - (2.0f * ((j * j) + (k * k)));
+    return normalize360(atan2f(t0, t1) * kRadToDeg);
+}
+
+void updateHeadingBootstrap(uint32_t now_ms) {
+    if (s_heading_ready || !s_geo_yaw_valid || !s_geo_yaw_new || !s_game_yaw_valid) return;
+    s_geo_yaw_new = false;
+
+    const float geo_rad = s_geo_yaw_cache * kDegToRad;
+    s_heading_boot_sin += sinf(geo_rad);
+    s_heading_boot_cos += cosf(geo_rad);
+    s_heading_boot_samples++;
+
+    const bool enough_time = (now_ms - s_heading_boot_start_ms) >= kHeadingBootMs;
+    const bool enough_samples = s_heading_boot_samples >= kHeadingBootMinSamples;
+    if (enough_time && enough_samples) {
+        s_heading_boot_mag_deg = normalize360(atan2f(s_heading_boot_sin, s_heading_boot_cos) * kRadToDeg);
+        s_heading_boot_game_deg = s_game_yaw_cache;
+        s_imu_heading_cache = s_heading_boot_mag_deg;
+        s_heading_ready = true;
+        hal_log("IMU-HEADING: boot lock mag=%.1f deg game0=%.1f deg samples=%u window=%lums",
+                s_heading_boot_mag_deg,
+                s_heading_boot_game_deg,
+                (unsigned)s_heading_boot_samples,
+                (unsigned long)(now_ms - s_heading_boot_start_ms));
+    }
 }
 
 } // namespace
@@ -186,8 +274,8 @@ void hal_imu_reset_pulse(uint32_t low_ms, uint32_t settle_ms) {
             wake_before, wake_after);
 }
 
-bool hal_imu_read(float* yaw_rate_dps, float* roll_deg) {
-    if (!yaw_rate_dps || !roll_deg) return false;
+bool hal_imu_read(float* yaw_rate_dps, float* roll_deg, float* heading_deg) {
+    if (!yaw_rate_dps || !roll_deg || !heading_deg) return false;
     if (!s_bno08x_ready || !s_reports_enabled || !s_bno08x) return false;
 
     bool got_update = false;
@@ -195,7 +283,12 @@ bool hal_imu_read(float* yaw_rate_dps, float* roll_deg) {
     if (int_asserted) {
         for (uint8_t i = 0; i < 4 && digitalRead(IMU_INT) == LOW; i++) {
             uint8_t pkt[256] = {};
+            const uint32_t request_us = hal_esp32_sensor_spi_timing_now_us();
+            hal_esp32_sensor_spi_lock();
+            const uint32_t lock_us = hal_esp32_sensor_spi_timing_now_us();
             const int n = s_bno08x->readPacket(pkt, sizeof(pkt));
+            hal_esp32_sensor_spi_unlock();
+            hal_esp32_sensor_spi_record_imu_transfer(request_us, lock_us, hal_esp32_sensor_spi_timing_now_us());
             if (n <= 0) {
                 break;
             }
@@ -204,34 +297,41 @@ bool hal_imu_read(float* yaw_rate_dps, float* roll_deg) {
         }
     }
 
-    float ax = 0.0f;
-    float ay = 0.0f;
-    float az = 0.0f;
-    if (s_bno08x->getAccelerometer(ax, ay, az)) {
-        s_imu_acc_x_cache = ax;
-        s_imu_acc_y_cache = ay;
-        s_imu_acc_z_cache = az;
-        got_update = true;
-    }
-
-    float x = 0.0f;
-    float y = 0.0f;
-    float z = 0.0f;
-    if (s_bno08x->getGyroscope(x, y, z)) {
-        s_imu_yaw_cache = z * kRadToDeg;
-        got_update = true;
-    }
-
     float qi = 0.0f;
     float qj = 0.0f;
     float qk = 0.0f;
     float qr = 1.0f;
-    if (s_bno08x->getQuaternion(qi, qj, qk, qr)) {
+    if (s_bno08x->getGameRotationVector(qi, qj, qk, qr)) {
+        const uint32_t now_quat_us = micros();
+        const float game_yaw = yawDegFromQuaternion(qi, qj, qk, qr);
         s_imu_roll_cache = rollDegFromQuaternion(qi, qj, qk, qr);
+        if (s_game_yaw_valid && s_heading_last_us != 0 && now_quat_us > s_heading_last_us) {
+            const float dt_s = static_cast<float>(now_quat_us - s_heading_last_us) / 1000000.0f;
+            if (dt_s > 0.0f) {
+                s_imu_yaw_cache = deltaDeg(game_yaw, s_game_yaw_cache) / dt_s;
+            }
+        }
+        s_game_yaw_cache = game_yaw;
+        s_heading_last_us = now_quat_us;
+        s_game_yaw_valid = true;
+        if (s_heading_ready) {
+            s_imu_heading_cache =
+                normalize360(s_heading_boot_mag_deg + deltaDeg(s_game_yaw_cache, s_heading_boot_game_deg));
+        }
+        got_update = true;
+    }
+
+    if (s_bno08x->getGeoRotationVector(qi, qj, qk, qr)) {
+        s_geo_yaw_cache = yawDegFromQuaternion(qi, qj, qk, qr);
+        s_geo_yaw_valid = true;
+        s_geo_yaw_new = true;
         got_update = true;
     }
 
     const uint32_t now_us = micros();
+    const uint32_t now_ms = millis();
+    updateHeadingBootstrap(now_ms);
+
     if (got_update) {
         s_imu_last_data_us = now_us;
         s_imu_cache_valid = true;
@@ -240,31 +340,36 @@ bool hal_imu_read(float* yaw_rate_dps, float* roll_deg) {
         s_diag_read_wait++;
     }
 
-    const uint32_t now_ms = millis();
-    if ((now_ms - s_last_diag_log_ms) >= 500UL) {
+#if LOG_IMU_DIAG_INTERVAL_MS > 0
+    if ((now_ms - s_last_diag_log_ms) >= LOG_IMU_DIAG_INTERVAL_MS) {
         s_last_diag_log_ms = now_ms;
         const uint32_t age_ms = s_imu_last_data_us == 0 ? 0 : ((now_us - s_imu_last_data_us) / 1000UL);
-        hal_log("IMU-DIAG: 7semi-example poll=%s int=%d data=%s age=%lums pkt=%lu acc=[%.2f %.2f %.2f] mps2 yaw_rate=%.2f dps roll=%.2f deg ok=%lu wait=%lu",
+        hal_log("IMU-DIAG: poll=%s int=%d data=%s age=%lums pkt=%lu game_yaw=%.1f geo_yaw=%.1f heading=%s%.1f yaw_rate=%.2f dps roll=%.2f deg boot=%u/%u ok=%lu wait=%lu",
                 s_reports_enabled ? "ON" : "OFF",
                 digitalRead(IMU_INT),
                 got_update ? "NEW" : (s_imu_cache_valid ? "CACHE" : "WAIT"),
                 (unsigned long)age_ms,
                 (unsigned long)s_diag_packet_count,
-                s_imu_acc_x_cache,
-                s_imu_acc_y_cache,
-                s_imu_acc_z_cache,
+                s_game_yaw_cache,
+                s_geo_yaw_cache,
+                s_heading_ready ? "" : "WAIT:",
+                s_imu_heading_cache,
                 s_imu_yaw_cache,
                 s_imu_roll_cache,
+                (unsigned)s_heading_boot_samples,
+                (unsigned)kHeadingBootMinSamples,
                 (unsigned long)s_diag_read_ok,
                 (unsigned long)s_diag_read_wait);
     }
+#endif
 
-    if (!s_imu_cache_valid || s_imu_last_data_us == 0 || (now_us - s_imu_last_data_us) > 50000UL) {
+    if (!s_imu_cache_valid || s_imu_last_data_us == 0 || (now_us - s_imu_last_data_us) > 500000UL) {
         return false;
     }
 
     *yaw_rate_dps = s_imu_yaw_cache;
     *roll_deg = s_imu_roll_cache;
+    *heading_deg = s_heading_ready ? s_imu_heading_cache : 9999.0f;
     return true;
 }
 

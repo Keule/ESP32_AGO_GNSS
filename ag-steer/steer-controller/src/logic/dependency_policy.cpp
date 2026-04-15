@@ -32,6 +32,11 @@ bool isImuPlausible(float yaw_rate_dps, float roll_deg) {
     return true;
 }
 
+bool isHeadingPlausible(float heading_deg) {
+    if (!std::isfinite(heading_deg)) return false;
+    return heading_deg >= 0.0f && heading_deg < 360.0f;
+}
+
 bool isSteerAngleInputValid(uint32_t now_ms,
                             uint32_t sample_ts_ms,
                             bool quality_ok) {

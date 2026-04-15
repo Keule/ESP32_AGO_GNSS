@@ -35,6 +35,7 @@ constexpr float MIN_STEER_SPEED_KMH = 0.1f;
 
 /// PID instance for steering
 static PidState s_steer_pid;
+static uint32_t s_last_was_diag_ms = 0;
 
 // ===================================================================
 // PID Implementation
@@ -197,6 +198,16 @@ void controlStep(void) {
     in.current_angle_deg = steerAngleReadDeg();
     in.steer_raw = hal_steer_angle_read_raw();
     in.setpoint_deg = desiredSteerAngleDeg;
+
+#if LOG_WAS_DIAG_INTERVAL_MS > 0
+    if (in.now_ms - s_last_was_diag_ms >= LOG_WAS_DIAG_INTERVAL_MS) {
+        s_last_was_diag_ms = in.now_ms;
+        hal_log("WAS-DIAG: angle=%.2f deg raw=%d safety=%s",
+                in.current_angle_deg,
+                (int)in.steer_raw,
+                in.safety_ok ? "OK" : "KICK");
+    }
+#endif
 
     {
         StateLock lock;

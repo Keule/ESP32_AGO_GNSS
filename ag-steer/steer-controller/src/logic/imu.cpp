@@ -1,9 +1,6 @@
 /**
  * @file imu.cpp
- * @brief IMU driver implementation (stub for BNO085 SPI).
- *
- * TODO: Implement full BNO085 SH-2 / sensor hub protocol over SPI.
- * Currently reads via HAL stub (PC sim returns dummy values).
+ * @brief IMU runtime glue for the BNO085 HAL.
  */
 
 #include "imu.h"
@@ -118,28 +115,36 @@ bool imuBringupModeEnabled(void) {
 
 void imuInit(void) {
     hal_imu_begin();
-    LOGI("IMU", "initialised (BNO085 SPI stub)");
+    LOGI("IMU", "initialised (BNO085 SPI)");
 }
 
 bool imuUpdate(void) {
     float yaw_rate = 0.0f;
     float roll = 0.0f;
+    float heading = 9999.0f;
 
-    if (!hal_imu_read(&yaw_rate, &roll)) {
+    if (!hal_imu_read(&yaw_rate, &roll, &heading)) {
         StateLock lock;
         g_nav.imu_quality_ok = false;
+        g_nav.heading_quality_ok = false;
         return false;
     }
 
     const uint32_t now_ms = hal_millis();
     const bool plausible = dep_policy::isImuPlausible(yaw_rate, roll);
+    const bool heading_plausible = dep_policy::isHeadingPlausible(heading);
 
     {
         StateLock lock;
+        if (heading_plausible) {
+            g_nav.heading_deg = heading;
+            g_nav.heading_timestamp_ms = now_ms;
+        }
         g_nav.yaw_rate_dps = yaw_rate;
         g_nav.roll_deg = roll;
         g_nav.imu_timestamp_ms = now_ms;
         g_nav.imu_quality_ok = plausible;
+        g_nav.heading_quality_ok = heading_plausible;
         g_nav.timestamp_ms = now_ms;
     }
 
@@ -224,7 +229,8 @@ void imuBringupTick(void) {
         s_last_read_ms = now_ms;
         float yaw_rate = 0.0f;
         float roll = 0.0f;
-        const bool ok = hal_imu_read(&yaw_rate, &roll);
+        float heading = 9999.0f;
+        const bool ok = hal_imu_read(&yaw_rate, &roll, &heading);
         if (ok) {
             s_read_ok++;
         } else {
@@ -233,6 +239,7 @@ void imuBringupTick(void) {
 
         (void)yaw_rate;
         (void)roll;
+        (void)heading;
     }
 
     if (c.ads_ping && now_ms - s_last_ads_ms >= k_ads_interval_ms) {

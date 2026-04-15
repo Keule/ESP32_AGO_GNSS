@@ -64,6 +64,27 @@ typedef struct {
     uint32_t bus_busy_us;
     uint32_t imu_transactions;
     uint32_t was_transactions;
+    uint32_t actuator_transactions;
+    uint32_t imu_last_us;
+    uint32_t imu_max_us;
+    uint32_t was_last_us;
+    uint32_t was_max_us;
+    uint32_t actuator_last_us;
+    uint32_t actuator_max_us;
+    uint32_t client_switches;
+    uint32_t was_to_imu_switches;
+    uint32_t imu_to_was_switches;
+    uint32_t other_switches;
+    uint32_t was_to_imu_gap_last_us;
+    uint32_t was_to_imu_gap_max_us;
+    uint32_t imu_to_was_gap_last_us;
+    uint32_t imu_to_was_gap_max_us;
+    uint32_t sensor_was_to_imu_switches;
+    uint32_t sensor_imu_to_was_switches;
+    uint32_t sensor_was_to_imu_gap_last_us;
+    uint32_t sensor_was_to_imu_gap_max_us;
+    uint32_t sensor_imu_to_was_gap_last_us;
+    uint32_t sensor_imu_to_was_gap_max_us;
     uint32_t imu_deadline_miss;
     uint32_t was_deadline_miss;
 } HalSpiTelemetry;
@@ -109,8 +130,8 @@ void hal_sensor_spi_get_telemetry(HalSpiTelemetry* out);
 /// Initialise IMU on SPI.
 void hal_imu_begin(void);
 
-/// Read yaw rate and roll from IMU. Returns true on success.
-bool hal_imu_read(float* yaw_rate_dps, float* roll_deg);
+/// Read yaw rate, roll, and heading from IMU. Returns true on success.
+bool hal_imu_read(float* yaw_rate_dps, float* roll_deg, float* heading_deg);
 
 /// Detect if IMU chip is present on SPI bus (call after hal_imu_begin).
 /// Performs a chip ID read to verify hardware responds.
@@ -158,6 +179,10 @@ float hal_steer_angle_read_deg(void);
 /// Read raw 16-bit ADC value from ADS1118 (single sample, no median).
 /// Returns 0 if not detected or not calibrated.
 int16_t hal_steer_angle_read_raw(void);
+
+/// Read the PGN 250 compatible 8-bit steer sensor value.
+/// Calibrated sensors are scaled to 0..255; uncalibrated sensors use raw low byte.
+uint8_t hal_steer_angle_read_sensor_byte(void);
 
 // --- Actuator ---
 

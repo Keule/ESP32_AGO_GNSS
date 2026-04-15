@@ -32,6 +32,8 @@ struct NavigationState {
     float   heading_deg;      // fused heading [degrees, 0-360]
     float   roll_deg;         // roll angle [degrees]
     float   yaw_rate_dps;     // yaw rate [degrees/second]
+    uint32_t heading_timestamp_ms; // last successful heading update [ms]
+    bool    heading_quality_ok; // true when heading is plausible/available
     uint32_t imu_timestamp_ms; // last successful IMU update [ms]
     bool    imu_quality_ok;    // true when most recent IMU sample is plausible
 

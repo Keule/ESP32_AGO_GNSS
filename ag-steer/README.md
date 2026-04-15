@@ -31,7 +31,7 @@ ag-steer/
 - **Board:** LilyGO T-ETH-Lite-S3 (ESP32-S3 + W5500 Ethernet)
 - **Funktionen:**
   - ADS1118 Lenkwinkelsensor (SPI, FSPI)
-  - BNO085 IMU (SPI, TODO)
+  - BNO085 IMU (SPI)
   - Hydraulik-/Elektro-Aktuator (SPI)
   - PID Regelkreis (200 Hz)
   - Ethernet/UDP Kommunikation mit AgIO
