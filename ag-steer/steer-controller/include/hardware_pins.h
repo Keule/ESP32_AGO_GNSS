@@ -70,13 +70,12 @@
 #define SENS_SPI_MOSI  17     // SPI MOSI (data from ESP32 to devices)
 
 // Chip Selects (active LOW) - GPIOs 38-42 are output-only, which is fine for CS.
-#define CS_IMU          38    // BNO085 IMU
+#define CS_IMU          47    // BNO085 IMU
 #define CS_STEER_ANG   18    // ADS1118 ADC (steer angle potentiometer)
 #define CS_ACT         40    // Actuator driver
 
-// IMU reset (active LOW). In bring-up wiring this shares GPIO40.
-// NOTE: This collides with CS_ACT and is therefore for IMU bring-up mode only.
-#define IMU_RST        40
+// IMU reset (active LOW).
+#define IMU_RST        48
 
 // ---------------------------------------------------------------------------
 // SD Card (FSPI = SPI2_HOST, OTA only)
@@ -94,7 +93,7 @@
 // ---------------------------------------------------------------------------
 // IMU interrupt (BNO085 INT pin) - needs bidirectional GPIO for input!
 // ---------------------------------------------------------------------------
-#define IMU_INT        39    // IMU INT routed to GPIO 39 (bring-up wiring)
+#define IMU_INT        45    // IMU INT routed to GPIO 45 (bring-up wiring)
 
 // ---------------------------------------------------------------------------
 // Safety input (active LOW)

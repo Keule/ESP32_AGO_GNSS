@@ -114,7 +114,7 @@ struct SpiClientConfig {
 };
 
 static const SpiClientConfig k_spi_cfg_ads = {CS_STEER_ANG, 2000000, SPI_MODE1, 10000};  // 100 Hz
-static SpiClientConfig k_spi_cfg_imu = {CS_IMU,       1000000, SPI_MODE0,  5000};  // 200 Hz
+static SpiClientConfig k_spi_cfg_imu = {CS_IMU,       1000000, SPI_MODE3,  5000};  // 200 Hz
 static const SpiClientConfig k_spi_cfg_act = {CS_ACT,       1000000, SPI_MODE0,     0};  // event-driven
 
 static SemaphoreHandle_t s_spi_bus_mutex = nullptr;
