@@ -11,6 +11,32 @@
 bool bno08x_isr_service_installed = false;
 
 static const char *TAG = "imu[bno08x]";
+
+bool __attribute__((weak)) BNO08x_platform_uses_external_spi(BNO08x *device)
+{
+    (void)device;
+    return false;
+}
+
+void __attribute__((weak)) BNO08x_platform_spi_begin(BNO08x *device)
+{
+    (void)device;
+}
+
+bool __attribute__((weak)) BNO08x_platform_transfer(BNO08x *device, const uint8_t *tx, uint8_t *rx, size_t len)
+{
+    (void)device;
+    (void)tx;
+    (void)rx;
+    (void)len;
+    return false;
+}
+
+void __attribute__((weak)) BNO08x_platform_spi_end(BNO08x *device)
+{
+    (void)device;
+}
+
 /**
  * @brief BNO08x imu constructor.
  *
@@ -23,6 +49,7 @@ static const char *TAG = "imu[bno08x]";
 void BNO08x_init(BNO08x *device, BNO08x_config_t *imu_config)
 {
     uint8_t tx_buffer[50] = {0};
+    const bool external_spi = BNO08x_platform_uses_external_spi(device);
 
     memcpy(&device->imu_config, imu_config, sizeof(BNO08x_config_t));
     device->evt_grp_spi = xEventGroupCreate();
@@ -117,7 +144,7 @@ void BNO08x_init(BNO08x *device, BNO08x_config_t *imu_config)
     inputs_config.mode = GPIO_MODE_INPUT;
     inputs_config.pull_up_en = GPIO_PULLUP_ENABLE;
     inputs_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    inputs_config.intr_type = GPIO_INTR_NEGEDGE;
+    inputs_config.intr_type = GPIO_INTR_DISABLE;
     gpio_config(&inputs_config);
 
     // check if GPIO ISR service has been installed (only has to be done once regardless of SPI slaves being used)
@@ -130,16 +157,19 @@ void BNO08x_init(BNO08x *device, BNO08x_config_t *imu_config)
     ESP_ERROR_CHECK(gpio_isr_handler_add(imu_config->io_int, BNO08x_hint_handler, (void *)device));
     gpio_intr_disable(imu_config->io_int); // disable interrupts initially before reset
 
-    // initialize the spi peripheral
-    // Note: If the bus is already initialized (e.g., by DWM1000), this will return ESP_ERR_INVALID_STATE which is OK
-    esp_err_t spi_ret = spi_bus_initialize(imu_config->spi_peripheral, &(device->bus_config), SPI_DMA_CH_AUTO);
-    if (spi_ret != ESP_OK && spi_ret != ESP_ERR_INVALID_STATE)
+    if (!external_spi)
     {
-        ESP_LOGE(TAG, "Failed to initialize SPI bus: %s", esp_err_to_name(spi_ret));
-    }
+        // initialize the spi peripheral
+        // Note: If the bus is already initialized (e.g., by DWM1000), this will return ESP_ERR_INVALID_STATE which is OK
+        esp_err_t spi_ret = spi_bus_initialize(imu_config->spi_peripheral, &(device->bus_config), SPI_DMA_CH_AUTO);
+        if (spi_ret != ESP_OK && spi_ret != ESP_ERR_INVALID_STATE)
+        {
+            ESP_LOGE(TAG, "Failed to initialize SPI bus: %s", esp_err_to_name(spi_ret));
+        }
 
-    // add the imu device to the bus
-    spi_bus_add_device(imu_config->spi_peripheral, &(device->imu_spi_config), &(device->spi_hdl));
+        // add the imu device to the bus
+        spi_bus_add_device(imu_config->spi_peripheral, &(device->imu_spi_config), &(device->spi_hdl));
+    }
 
     // do first SPI operation into nowhere before BNO085 reset to let periphiral stabilize (Anton B.)
     device->spi_transaction.length = 8;
@@ -148,11 +178,20 @@ void BNO08x_init(BNO08x *device, BNO08x_config_t *imu_config)
     device->spi_transaction.rx_buffer = NULL;
     device->spi_transaction.flags = 0;
 
-    spi_device_acquire_bus(device->spi_hdl, portMAX_DELAY);                   // acquire the SPI bus
-    gpio_set_level(device->imu_config.io_cs, 0);                              // assert chip select
-    spi_device_polling_transmit(device->spi_hdl, &(device->spi_transaction)); // send data packet
-    gpio_set_level(device->imu_config.io_cs, 1);                              // de-assert chip select
-    spi_device_release_bus(device->spi_hdl);                                  // release the SPI bus
+    if (external_spi)
+    {
+        BNO08x_platform_spi_begin(device);
+        BNO08x_platform_transfer(device, tx_buffer, NULL, 1);
+        BNO08x_platform_spi_end(device);
+    }
+    else
+    {
+        spi_device_acquire_bus(device->spi_hdl, portMAX_DELAY);                   // acquire the SPI bus
+        gpio_set_level(device->imu_config.io_cs, 0);                              // assert chip select
+        spi_device_polling_transmit(device->spi_hdl, &(device->spi_transaction)); // send data packet
+        gpio_set_level(device->imu_config.io_cs, 1);                              // de-assert chip select
+        spi_device_release_bus(device->spi_hdl);                                  // release the SPI bus
+    }
 }
 
 /**
@@ -176,6 +215,8 @@ bool BNO08x_initialize(BNO08x *device)
 
     device->spi_task_hdl = NULL;
     xTaskCreate(&BNO08x_spi_task, "bno08x_spi_task", 4096, (void *)device, device->imu_config.task_priority, &(device->spi_task_hdl)); // launch SPI task (data processing merged in)
+    gpio_set_intr_type(device->imu_config.io_int, GPIO_INTR_NEGEDGE);
+    gpio_intr_disable(device->imu_config.io_int);
 
     if (!BNO08x_hard_reset(device))
         return false;
@@ -454,6 +495,7 @@ bool BNO08x_mode_sleep(BNO08x *device)
 bool BNO08x_receive_packet(BNO08x *device, bno08x_rx_packet_t *packet_out)
 {
     uint8_t dummy_header_tx[4] = {0};
+    const bool external_spi = BNO08x_platform_uses_external_spi(device);
 
     // setup transaction to receive first 4 bytes (packet header)
     device->spi_transaction.rx_buffer = packet_out->header;
@@ -462,10 +504,22 @@ bool BNO08x_receive_packet(BNO08x *device, bno08x_rx_packet_t *packet_out)
     device->spi_transaction.rxlength = 4 * 8;
     device->spi_transaction.flags = 0;
 
-    spi_device_acquire_bus(device->spi_hdl, portMAX_DELAY); // acquire the SPI bus so the two transactions are back-to-back
-    gpio_set_level(device->imu_config.io_cs, 0);            // assert chip select
+    if (external_spi)
+    {
+        BNO08x_platform_spi_begin(device);
+        if (!BNO08x_platform_transfer(device, dummy_header_tx, packet_out->header, sizeof(dummy_header_tx)))
+        {
+            BNO08x_platform_spi_end(device);
+            return false;
+        }
+    }
+    else
+    {
+        spi_device_acquire_bus(device->spi_hdl, portMAX_DELAY); // acquire the SPI bus so the two transactions are back-to-back
+        gpio_set_level(device->imu_config.io_cs, 0);            // assert chip select
 
-    spi_device_polling_transmit(device->spi_hdl, &(device->spi_transaction)); // receive first 4 bytes (packet header)
+        spi_device_polling_transmit(device->spi_hdl, &(device->spi_transaction)); // receive first 4 bytes (packet header)
+    }
 
     // calculate length of packet from received header
     packet_out->length = (((uint16_t)packet_out->header[1]) << 8) | ((uint16_t)packet_out->header[0]);
@@ -477,8 +531,15 @@ bool BNO08x_receive_packet(BNO08x *device, bno08x_rx_packet_t *packet_out)
 
     if (packet_out->length == 0)
     {
-        gpio_set_level(device->imu_config.io_cs, 1); // de-assert chip select
-        spi_device_release_bus(device->spi_hdl);     // release the SPI bus
+        if (!external_spi)
+        {
+            gpio_set_level(device->imu_config.io_cs, 1); // de-assert chip select
+            spi_device_release_bus(device->spi_hdl);     // release the SPI bus
+        }
+        else
+        {
+            BNO08x_platform_spi_end(device);
+        }
         return false;
     }
 
@@ -491,10 +552,22 @@ bool BNO08x_receive_packet(BNO08x *device, bno08x_rx_packet_t *packet_out)
     device->spi_transaction.rxlength = packet_out->length * 8;
     device->spi_transaction.flags = 0;
 
-    spi_device_polling_transmit(device->spi_hdl, &(device->spi_transaction)); // receive rest of packet
+    if (external_spi)
+    {
+        if (!BNO08x_platform_transfer(device, NULL, packet_out->body, packet_out->length))
+        {
+            BNO08x_platform_spi_end(device);
+            return false;
+        }
+        BNO08x_platform_spi_end(device);
+    }
+    else
+    {
+        spi_device_polling_transmit(device->spi_hdl, &(device->spi_transaction)); // receive rest of packet
 
-    gpio_set_level(device->imu_config.io_cs, 1); // de-assert chip select
-    spi_device_release_bus(device->spi_hdl);     // release the SPI bus
+        gpio_set_level(device->imu_config.io_cs, 1); // de-assert chip select
+        spi_device_release_bus(device->spi_hdl);     // release the SPI bus
+    }
 
     xEventGroupSetBits(device->evt_grp_spi, EVT_GRP_SPI_RX_DONE_BIT);
 
@@ -534,6 +607,8 @@ void BNO08x_queue_packet(BNO08x *device, uint8_t channel_number, uint8_t data_le
  */
 void BNO08x_send_packet(BNO08x *device, bno08x_tx_packet_t *packet)
 {
+    const bool external_spi = BNO08x_platform_uses_external_spi(device);
+
     // setup transaction to send packet
     device->spi_transaction.length = packet->length * 8;
     device->spi_transaction.rxlength = 0;
@@ -541,11 +616,20 @@ void BNO08x_send_packet(BNO08x *device, bno08x_tx_packet_t *packet)
     device->spi_transaction.rx_buffer = NULL;
     device->spi_transaction.flags = 0;
 
-    spi_device_acquire_bus(device->spi_hdl, portMAX_DELAY);                   // acquire the SPI bus
-    gpio_set_level(device->imu_config.io_cs, 0);                              // assert chip select
-    spi_device_polling_transmit(device->spi_hdl, &(device->spi_transaction)); // send data packet
-    gpio_set_level(device->imu_config.io_cs, 1);                              // de-assert chip select
-    spi_device_release_bus(device->spi_hdl);                                  // release the SPI bus
+    if (external_spi)
+    {
+        BNO08x_platform_spi_begin(device);
+        BNO08x_platform_transfer(device, packet->body, NULL, packet->length);
+        BNO08x_platform_spi_end(device);
+    }
+    else
+    {
+        spi_device_acquire_bus(device->spi_hdl, portMAX_DELAY);                   // acquire the SPI bus
+        gpio_set_level(device->imu_config.io_cs, 0);                              // assert chip select
+        spi_device_polling_transmit(device->spi_hdl, &(device->spi_transaction)); // send data packet
+        gpio_set_level(device->imu_config.io_cs, 1);                              // de-assert chip select
+        spi_device_release_bus(device->spi_hdl);                                  // release the SPI bus
+    }
 
     xEventGroupSetBits(device->evt_grp_spi, EVT_GRP_SPI_TX_DONE_BIT);
 }
@@ -2953,6 +3037,13 @@ void IRAM_ATTR BNO08x_hint_handler(void *arg)
     BaseType_t xHighPriorityTaskWoken = pdFALSE;
     BNO08x *imu = (BNO08x *)arg; // cast argument received by gpio_isr_handler_add ("this" pointer to imu object
     // created by constructor call)
+
+    if (imu == NULL || imu->spi_task_hdl == NULL)
+    {
+        if (imu != NULL)
+            gpio_intr_disable(imu->imu_config.io_int);
+        return;
+    }
 
     gpio_intr_disable(imu->imu_config.io_int);                          // disable interrupts
     vTaskNotifyGiveFromISR(imu->spi_task_hdl, &xHighPriorityTaskWoken); // notify SPI task BNO08x is ready for

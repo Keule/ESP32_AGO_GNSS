@@ -14,7 +14,7 @@
  *   SPI3_HOST = W5500 Ethernet  (onboard, GPIO  9/10/11/12/13/14)
  *   SPI2_HOST = Sensor bus      (GPIO 15/16/17 on FSPI)
  *              -> ADS1118 ADC (steer angle)   CS=18
- *              -> BNO085 IMU                     CS=38
+ *              -> BNO085 IMU                     CS=47
  *              -> Actuator driver                CS=40
  *
  *   SD Card uses SPI2_HOST (FSPI) too, but with DIFFERENT pins (5/6/7).
@@ -41,9 +41,9 @@
  * GPIO assignment - by function:
  *
  *   W5500 Ethernet (SPI3_HOST):  9  10  11  12  13  14  (fixed by board)
- *   ADS1118 + Sensors (FSPI):    15  16  17  18  38  40
+ *   ADS1118 + Sensors (FSPI):    15  16  17  18  38  40  47
  *   SD Card (FSPI, OTA only):    5   6   7  42
- *   Misc:                        4  47  48
+ *   Misc:                        4  45  46  48
  */
 
 #pragma once
@@ -69,13 +69,17 @@
 #define SENS_SPI_MISO  15     // SPI MISO (data from devices to ESP32)
 #define SENS_SPI_MOSI  17     // SPI MOSI (data from ESP32 to devices)
 
-// Chip Selects (active LOW) - GPIOs 38-42 are output-only, which is fine for CS.
+// Chip Selects (active LOW) - GPIOs 38-42 are output-only, which is fine for CS/control.
 #define CS_IMU          47    // BNO085 IMU
 #define CS_STEER_ANG   18    // ADS1118 ADC (steer angle potentiometer)
 #define CS_ACT         40    // Actuator driver
 
 // IMU reset (active LOW).
 #define IMU_RST        48
+
+// BNO085 PS0/WAKE. Must be HIGH before reset to select SPI mode together
+// with PS1=HIGH, then can be driven LOW later to wake the device.
+#define IMU_WAKE       38
 
 // ---------------------------------------------------------------------------
 // SD Card (FSPI = SPI2_HOST, OTA only)
@@ -103,12 +107,13 @@
 // ---------------------------------------------------------------------------
 // Logging switch (active LOW, internal pull-up)
 //
-// GPIO 47 is a free bidirectional GPIO on the T-ETH-Lite-S3 header.
-// Connect a toggle switch between GPIO 47 and GND.
+// GPIO 46 is an ESP32-S3 strapping pin, but works for this active-LOW input:
+// floating/LOW is safe for serial download mode and normal boot ignores it.
+// Connect a toggle switch between GPIO 46 and GND.
 //   Switch OFF (open)  -> pin pulled HIGH -> logging disabled
 //   Switch ON (closed) -> pin pulled LOW  -> logging enabled
 // ---------------------------------------------------------------------------
-#define LOG_SWITCH_PIN   47
+#define LOG_SWITCH_PIN   46
 
 // ---------------------------------------------------------------------------
 // Firmware OTA files on SD card

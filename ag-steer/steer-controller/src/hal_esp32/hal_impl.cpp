@@ -7,7 +7,7 @@
  *   - Ethernet: W5500 over SPI3_HOST (GPIO 9/10/11/12/13/14) via ESP-IDF ETH driver
  *   - Sensor SPI (FSPI/SPI2_HOST): SCK=16, MISO=15, MOSI=17
  *     - ADS1118 ADC (steer angle): CS=18
- *     - BNO085 IMU: CS=38
+ *     - BNO085 IMU: CS=47
  *     - Actuator: CS=40
  *   - SD Card (FSPI, OTA only): SCK=7, MISO=5, MOSI=6, CS=42
  *   - Safety: GPIO4 active LOW
@@ -139,10 +139,9 @@ static int16_t s_was_raw_cache = 0;
 static uint32_t s_was_last_poll_us = 0;
 static bool s_was_cache_valid = false;
 
-static float s_imu_yaw_cache = 0.0f;
-static float s_imu_roll_cache = 0.0f;
+static uint32_t s_bno08x_spi_start_us = 0;
+
 static uint32_t s_imu_last_poll_us = 0;
-static bool s_imu_cache_valid = false;
 
 static const SpiClientConfig& spiCfg(SpiClient client) {
     switch (client) {
@@ -192,6 +191,55 @@ static bool spiTransfer(SpiClient client, const uint8_t* tx, uint8_t* rx, size_t
     return true;
 }
 
+extern "C" bool BNO08x_platform_uses_external_spi(void* device) {
+    (void)device;
+    return true;
+}
+
+extern "C" void BNO08x_platform_spi_begin(void* device) {
+    (void)device;
+    const SpiClientConfig& cfg = k_spi_cfg_imu;
+    s_bno08x_spi_start_us = micros();
+
+    if (s_spi_bus_mutex) {
+        xSemaphoreTake(s_spi_bus_mutex, portMAX_DELAY);
+    }
+
+    digitalWrite(CS_STEER_ANG, HIGH);
+    digitalWrite(CS_IMU, HIGH);
+    digitalWrite(CS_ACT, HIGH);
+
+    sensorSPI.beginTransaction(SPISettings(cfg.freq_hz, MSBFIRST, cfg.mode));
+    digitalWrite(cfg.cs_pin, LOW);
+}
+
+extern "C" bool BNO08x_platform_transfer(void* device, const uint8_t* tx, uint8_t* rx, size_t len) {
+    (void)device;
+    for (size_t i = 0; i < len; i++) {
+        const uint8_t value = sensorSPI.transfer(tx ? tx[i] : 0x00);
+        if (rx) {
+            rx[i] = value;
+        }
+    }
+    return true;
+}
+
+extern "C" void BNO08x_platform_spi_end(void* device) {
+    (void)device;
+    digitalWrite(CS_IMU, HIGH);
+    sensorSPI.endTransaction();
+
+    if (s_spi_bus_mutex) {
+        xSemaphoreGive(s_spi_bus_mutex);
+    }
+
+    const uint32_t now_us = micros();
+    s_bus_tm.busy_us += now_us - s_bno08x_spi_start_us;
+    s_bus_tm.transactions++;
+    s_poll_imu.transactions++;
+    s_imu_last_poll_us = now_us;
+}
+
 static void spiCheckDeadline(SpiPollState* poll, uint32_t period_us, uint32_t now_us) {
     if (!poll || period_us == 0) return;
     if (poll->next_due_us == 0) {
@@ -204,6 +252,14 @@ static void spiCheckDeadline(SpiPollState* poll, uint32_t period_us, uint32_t no
     while (poll->next_due_us <= now_us) {
         poll->next_due_us += period_us;
     }
+}
+
+void hal_esp32_imu_spi_check_deadline(uint32_t period_us, uint32_t now_us) {
+    spiCheckDeadline(&s_poll_imu, period_us, now_us);
+}
+
+bool hal_esp32_imu_raw_transfer(const uint8_t* tx, uint8_t* rx, size_t len) {
+    return spiTransfer(SpiClient::BNO085, tx, rx, len);
 }
 
 // ===================================================================
@@ -356,112 +412,6 @@ void hal_sensor_spi_get_telemetry(HalSpiTelemetry* out) {
     if (win_us > 0) {
         out->bus_utilization_pct = (100.0f * static_cast<float>(s_bus_tm.busy_us)) / static_cast<float>(win_us);
     }
-}
-
-void hal_imu_begin(void) {
-    pinMode(CS_IMU, OUTPUT);
-    digitalWrite(CS_IMU, HIGH);
-    pinMode(IMU_INT, INPUT_PULLUP);
-    pinMode(IMU_RST, OUTPUT);
-    digitalWrite(IMU_RST, HIGH);
-    // TODO: Send BNO085 reset/initialise sequence over SPI
-    hal_log("ESP32: IMU begun on CS=%d INT=%d RST=%d (stub)", CS_IMU, IMU_INT, IMU_RST);
-}
-
-void hal_imu_reset_pulse(uint32_t low_ms, uint32_t settle_ms) {
-    const int int_before = digitalRead(IMU_INT);
-    digitalWrite(IMU_RST, LOW);
-    delay(low_ms);
-    const int int_during = digitalRead(IMU_INT);
-    digitalWrite(IMU_RST, HIGH);
-    delay(settle_ms);
-    const int int_after = digitalRead(IMU_INT);
-    hal_log("ESP32: IMU reset pulse low=%lums settle=%lums INT(before=%d during=%d after=%d)",
-            (unsigned long)low_ms,
-            (unsigned long)settle_ms,
-            int_before, int_during, int_after);
-}
-
-bool hal_imu_read(float* yaw_rate_dps, float* roll_deg) {
-    if (!yaw_rate_dps || !roll_deg) return false;
-    const uint32_t now_us = micros();
-    if (!s_imu_cache_valid || (now_us - s_imu_last_poll_us) >= k_spi_cfg_imu.period_us) {
-        spiCheckDeadline(&s_poll_imu, k_spi_cfg_imu.period_us, now_us);
-        uint8_t tx[4] = {0x00, 0x00, 0x00, 0x00};
-        uint8_t rx[4] = {0};
-        spiTransfer(SpiClient::BNO085, tx, rx, sizeof(tx));
-        s_imu_yaw_cache = 0.0f;   // TODO: decode SH-2 payload
-        s_imu_roll_cache = 0.0f;  // TODO: decode SH-2 payload
-        s_imu_last_poll_us = now_us;
-        s_imu_cache_valid = true;
-        s_poll_imu.transactions++;
-    }
-    *yaw_rate_dps = s_imu_yaw_cache;
-    *roll_deg = s_imu_roll_cache;
-    return true;
-}
-
-bool hal_imu_detect(void) {
-    // BNO085 detection: raw SPI probe transfer.
-    uint8_t response = 0;
-    if (!hal_imu_probe_once(&response)) return false;
-
-    // 0xFF = floating MISO (no device pulling it down)
-    // 0x00 = MISO stuck LOW (bus fault)
-    // A real BNO085 should produce non-trivial responses during bring-up.
-    bool detected = (response != 0xFF && response != 0x00);
-    hal_log("ESP32: IMU detect: SPI response=0x%02X %s",
-            response, detected ? "OK" : "FAIL (no device)");
-    return detected;
-}
-
-bool hal_imu_probe_once(uint8_t* out_response) {
-    if (!out_response) return false;
-    uint8_t tx = 0x00;
-    uint8_t response = 0;
-    spiTransfer(SpiClient::BNO085, &tx, &response, 1);
-    *out_response = response;
-    return true;
-}
-
-bool hal_imu_detect_boot_qualified(HalImuDetectStats* out) {
-    HalImuDetectStats local = {};
-    local.samples = 20;
-    local.last_response = 0x00;
-
-    for (uint16_t i = 0; i < local.samples; i++) {
-        uint8_t response = 0;
-        hal_imu_probe_once(&response);
-        local.last_response = response;
-
-        if (response == 0xFF) {
-            local.ff_count++;
-        } else if (response == 0x00) {
-            local.zero_count++;
-        } else {
-            local.ok_count++;
-            local.other_count++;
-        }
-
-        delay(10);
-    }
-
-    // Qualification threshold: require at least 80% non-zero/non-FF responses.
-    // This avoids one-off glitches flipping boot presence.
-    local.present = (local.ok_count >= 16);
-
-    hal_log("ESP32: IMU boot check: present=%s ok=%u/%u ff=%u zero=%u last=0x%02X",
-            local.present ? "YES" : "NO",
-            (unsigned)local.ok_count,
-            (unsigned)local.samples,
-            (unsigned)local.ff_count,
-            (unsigned)local.zero_count,
-            (unsigned)local.last_response);
-
-    if (out) {
-        *out = local;
-    }
-    return local.present;
 }
 
 void hal_imu_get_spi_info(HalImuSpiInfo* out) {

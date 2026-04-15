@@ -26,6 +26,7 @@
 //std library includes
 #include <inttypes.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -211,6 +212,14 @@ typedef struct
     uint16_t mems_raw_gyro_X, mems_raw_gyro_Y, mems_raw_gyro_Z;
     uint16_t mems_raw_magf_X, mems_raw_magf_Y, mems_raw_magf_Z;
 } BNO08x;
+
+// Optional platform SPI hooks. When BNO08x_platform_uses_external_spi() returns
+// true, the driver does not initialise an ESP-IDF SPI bus and routes transfers
+// through BNO08x_platform_transfer() instead.
+bool BNO08x_platform_uses_external_spi(BNO08x *device);
+void BNO08x_platform_spi_begin(BNO08x *device);
+bool BNO08x_platform_transfer(BNO08x *device, const uint8_t *tx, uint8_t *rx, size_t len);
+void BNO08x_platform_spi_end(BNO08x *device);
 
 // Function prototypes
 void BNO08x_init(BNO08x *device, BNO08x_config_t *imu_config);
