@@ -1,39 +1,6 @@
-# IDE / Editor
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Build artifacts
-.pio/
-*.o
-*.elf
-*.bin
-*.map
-*.hex
-
-# Environment
-.env
-.env.local
-
-# Skills system (not part of this repo)
-skills/
-
-# Download/output directory
-download/
-
-# Temp files
-*.tmp
-*.bak
-*.log
-
-# NEVER work on main — always use agent/zai-work
-# Nested repo copy (causes git checkout conflicts)
-ZAI_GPS/
-
-# Leftover from main branch (conflicts with zai-work)
-ag-steer/steer-controller/src/logic/aog_udp_protocol.cpp
+.pio
+.vscode/.browse.c_cpp.db*
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch
+.git
