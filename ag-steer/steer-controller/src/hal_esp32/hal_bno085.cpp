@@ -344,6 +344,8 @@ bool hal_imu_read(float* yaw_rate_dps, float* roll_deg, float* heading_deg) {
     if ((now_ms - s_last_diag_log_ms) >= LOG_IMU_DIAG_INTERVAL_MS) {
         s_last_diag_log_ms = now_ms;
         const uint32_t age_ms = s_imu_last_data_us == 0 ? 0 : ((now_us - s_imu_last_data_us) / 1000UL);
+        // Keep IMU diagnostics on serial/hal_log independent from Ethernet link state
+        // so bring-up and runtime troubleshooting still work offline.
         hal_log("IMU-DIAG: poll=%s int=%d data=%s age=%lums pkt=%lu game_yaw=%.1f geo_yaw=%.1f heading=%s%.1f yaw_rate=%.2f dps roll=%.2f deg boot=%u/%u ok=%lu wait=%lu",
                 s_reports_enabled ? "ON" : "OFF",
                 digitalRead(IMU_INT),
