@@ -1,17 +1,14 @@
 /**
  * @file hal_impl.cpp
- * @brief ESP32-S3 HAL implementation for LilyGO T-ETH-Lite-S3.
+ * @brief ESP32 HAL implementation for LilyGO T-ETH-Lite (ESP32 + ESP32-S3).
  *
  * Hardware:
- *   - MCU: ESP32-S3-WROOM-1
- *   - Ethernet: W5500 over SPI3_HOST (GPIO 9/10/11/12/13/14) via ESP-IDF ETH driver
- *   - Sensor SPI (FSPI/SPI2_HOST): SCK=16, MISO=15, MOSI=17
- *     - ADS1118 ADC (steer angle): CS=18
- *     - BNO085 IMU: CS=47
- *     - Actuator: CS=40
- *   - IMU sideband wiring: INT=45, RST=48, WAKE=38
- *   - SD Card (FSPI, OTA only): SCK=7, MISO=5, MOSI=6, CS=42
- *   - Safety: GPIO4 active LOW
+ *   - MCU: ESP32 or ESP32-S3 (selected by build target)
+ *   - Ethernet: W5500 via ESP-IDF ETH driver
+ *   - Sensor SPI host/pins: selected in hardware_pins.h per SoC target
+ *   - IMU/ADS1118/actuator chip-select and sideband pins: selected per SoC
+ *   - SD card pins (OTA): selected per SoC
+ *   - Safety input: active LOW
  *
  * ADS1118 ADC uses the libdriver/ads1118 library (lib/ads1118/).
  * Interface functions (SPI transmit, init, deinit, delay, debug) are
@@ -39,7 +36,7 @@
 // Arduino / ESP32 includes
 // ===================================================================
 #include <Arduino.h>
-#include <SPI.h>           // SPIClass for sensor bus (FSPI)
+#include <SPI.h>           // SPIClass for SoC-specific sensor bus host
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <Preferences.h>    // NVS flash storage for calibration
@@ -83,20 +80,21 @@ static bool s_eth_link_up    = false;   // true if ARDUINO_EVENT_ETH_CONNECTED
 static bool s_eth_has_ip     = false;   // true if ARDUINO_EVENT_ETH_GOT_IP
 
 // ===================================================================
-// Shared SPI bus - FSPI / SPI2_HOST
+// Shared SPI bus used by ADS1118, IMU and actuator.
+// Host/pins are selected in hardware_pins.h by target SoC.
 //
-// CRITICAL: Must use FSPI, NOT HSPI!
-// On ESP32-S3 (Arduino Core 2.x):  HSPI = SPI3_HOST (occupied by W5500!)
-//                                  FSPI = SPI2_HOST (free for sensors)
-//
-// Sensor devices on this bus: ADS1118 (CS=18), IMU (CS=47), Actuator (CS=40).
-// Pins: SCK=16, MISO=15, MOSI=17.
-//
-// SD card uses the SAME SPI peripheral (FSPI) but DIFFERENT pins (SCK=7, MISO=5, MOSI=6).
-// During OTA updates, FSPI is re-initialised with SD pins via
-// hal_sensor_spi_deinit() / hal_sensor_spi_reinit().
+// SD card OTA temporarily reuses an SPI peripheral; sensor bus is explicitly
+// deinit/reinit around OTA to keep the sensor path consistent.
 // ===================================================================
-static SPIClass sensorSPI(FSPI);
+#if defined(LILYGO_T_ETH_LITE_ESP32S3)
+static constexpr const char* k_board_target_label = "LILYGO_T_ETH_LITE_ESP32S3";
+#elif defined(LILYGO_T_ETH_LITE_ESP32)
+static constexpr const char* k_board_target_label = "LILYGO_T_ETH_LITE_ESP32";
+#else
+  #error "Unsupported LilyGO target in hal_impl.cpp"
+#endif
+
+static SPIClass sensorSPI(SENS_SPI_HOST);
 
 // ===================================================================
 // Shared sensor SPI transaction layer (bus lock + per-device settings)
@@ -328,7 +326,7 @@ static SemaphoreHandle_t s_mutex = nullptr;
 
 // ===================================================================
 // Serial log mutex — protects USB CDC Serial from concurrent access.
-// USB CDC (Serial on ESP32-S3) is NOT thread-safe and will crash
+// Serial output is NOT thread-safe and can crash
 // if two tasks call Serial.printf() simultaneously on different cores.
 // ===================================================================
 static SemaphoreHandle_t s_log_mutex = nullptr;
@@ -349,10 +347,10 @@ void hal_delay_ms(uint32_t ms) {
 }
 
 // ===================================================================
-// Logging – prints to USB CDC Serial via Serial.printf.
+// Logging – prints to Serial via Serial.printf.
 //
 // ESP_LOGI goes to UART0 by default, which does NOT appear on
-// USB CDC Serial on ESP32-S3.  Serial.printf goes to USB CDC.
+// active Serial transport (USB CDC or UART, depending on target).
 //
 // hal_log() is kept for ABI compatibility with logic/ modules.
 // New code should use LOGI/LOGD/LOGW/LOGE from log_ext.h directly.
@@ -497,7 +495,7 @@ void hal_sensor_spi_init(void) {
     s_sensor_imu_to_was_gap_last_us = 0;
     s_sensor_imu_to_was_gap_max_us = 0;
     s_was_cache_valid = false;
-    hal_log("ESP32: sensor SPI initialised on FSPI/SPI2_HOST (SCK=%d MISO=%d MOSI=%d)",
+    hal_log("ESP32: sensor SPI initialised on %s (SCK=%d MISO=%d MOSI=%d)", SENS_SPI_HOST_LABEL,
             SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI);
 }
 
@@ -505,7 +503,7 @@ void hal_sensor_spi_deinit(void) {
     spiBeginCritical();
     sensorSPI.end();
     spiEndCritical();
-    hal_log("ESP32: shared SPI released (FSPI peripheral free)");
+    hal_log("ESP32: shared SPI released (%s peripheral free)", SENS_SPI_HOST_LABEL);
 }
 
 void hal_sensor_spi_reinit(void) {
@@ -545,7 +543,7 @@ void hal_sensor_spi_reinit(void) {
     s_was_cache_valid = false;
     spiEndCritical();
     delay(10);   // let GPIO matrix reconfigure
-    hal_log("ESP32: shared SPI re-initialised on FSPI/SPI2_HOST (SCK=%d MISO=%d MOSI=%d)",
+    hal_log("ESP32: shared SPI re-initialised on %s (SCK=%d MISO=%d MOSI=%d)", SENS_SPI_HOST_LABEL,
             SENS_SPI_SCK, SENS_SPI_MISO, SENS_SPI_MOSI);
     hal_imu_on_sensor_spi_reinit();
 }
@@ -1248,12 +1246,10 @@ static void hal_esp32_common_boot_init(void) {
         delay(10);
     }
 
-    // Redirect ESP-IDF log (ESP_LOGI etc.) to USB CDC Serial.
-    // Without this, esp_log goes to UART0 while Serial.println
-    // goes to USB CDC — user would only see half the output.
+// Redirect ESP-IDF log (ESP_LOGI etc.) to active Serial output.
     Serial.setDebugOutput(true);
 
-    hal_log("ESP32-S3 AgSteer starting...");
+    hal_log("%s AgSteer starting (%s)...", HW_SOC_LABEL, k_board_target_label);
 
     // Mutex
     hal_mutex_init();
@@ -1261,7 +1257,7 @@ static void hal_esp32_common_boot_init(void) {
     // Safety pin
     pinMode(SAFETY_IN, INPUT_PULLUP);
 
-    // SPI sensor bus (FSPI / SPI2_HOST) - SCK=16, MISO=15, MOSI=17
+    // SPI sensor bus (SoC-specific mapping from hardware_pins.h)
     hal_sensor_spi_init();
 }
 

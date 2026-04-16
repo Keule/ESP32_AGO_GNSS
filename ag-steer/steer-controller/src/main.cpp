@@ -1,8 +1,8 @@
 /**
  * @file main.cpp
- * @brief ESP32-S3 firmware main entry point.
+ * @brief ESP32 firmware main entry point (ESP32 + ESP32-S3 targets).
  *
- * Target: LilyGO T-ETH-Lite-S3 (ESP32-S3-WROOM-1 + W5500 Ethernet)
+ * Target: LilyGO T-ETH-Lite platform (ESP32 or ESP32-S3 + W5500 Ethernet)
  *
  * Two FreeRTOS tasks:
  *   - commTask  (Core 0): Ethernet/UDP, AOG protocol, HW status
