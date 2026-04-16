@@ -72,6 +72,19 @@ struct NavigationState {
     // --- Speed safety ---
     float    gps_speed_kmh;          // current GPS speed [km/h] from PGN 254
 
+    // --- GNSS (on-controller parser path) ---
+    double   gnss_lat_deg;           // geodetic latitude [deg]
+    double   gnss_lon_deg;           // geodetic longitude [deg]
+    float    gnss_alt_m;             // altitude above MSL [m]
+    float    gnss_sog_mps;           // speed over ground [m/s]
+    float    gnss_cog_deg;           // course over ground [deg, 0..360)
+    uint8_t  gnss_fix_quality;       // GGA fix quality (0=no fix)
+    uint32_t gnss_fix_timestamp_ms;  // last valid GGA fix timestamp [ms]
+    uint32_t gnss_motion_timestamp_ms; // last valid RMC motion timestamp [ms]
+    uint8_t  gnss_num_sats;          // satellites used (from GGA)
+    float    gnss_hdop;              // horizontal dilution of precision
+    bool     gnss_quality_ok;        // parser + plausibility + freshness status
+
     // --- PID output (for status reporting) ---
     uint16_t pid_output;      // current PID output (actuator command)
 

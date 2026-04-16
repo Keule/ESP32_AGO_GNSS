@@ -82,6 +82,26 @@ static bool s_w5500_detected = false;   // true if ETH.begin() succeeded
 static bool s_eth_link_up    = false;   // true if ARDUINO_EVENT_ETH_CONNECTED
 static bool s_eth_has_ip     = false;   // true if ARDUINO_EVENT_ETH_GOT_IP
 
+// GNSS UART (dual stream: position + heading), pins configurable via build flags.
+#ifndef GNSS_MAIN_RX_PIN
+#define GNSS_MAIN_RX_PIN 44
+#endif
+#ifndef GNSS_MAIN_TX_PIN
+#define GNSS_MAIN_TX_PIN 43
+#endif
+#ifndef GNSS_HEADING_RX_PIN
+#define GNSS_HEADING_RX_PIN 2
+#endif
+#ifndef GNSS_HEADING_TX_PIN
+#define GNSS_HEADING_TX_PIN 1
+#endif
+#ifndef GNSS_UART_BAUD
+#define GNSS_UART_BAUD 460800
+#endif
+
+static HardwareSerial s_gnss_main(1);
+static HardwareSerial s_gnss_heading(2);
+
 // ===================================================================
 // Shared SPI bus - FSPI / SPI2_HOST
 //
@@ -1235,6 +1255,35 @@ bool hal_net_is_connected(void) {
 
 bool hal_net_detected(void) {
     return s_w5500_detected;
+}
+
+static bool hal_gnss_read_line_from_serial(HardwareSerial& serial, char* out_line, size_t out_len) {
+    if (!out_line || out_len < 2) return false;
+    const int n = serial.available();
+    if (n <= 0) return false;
+    size_t len = serial.readBytesUntil('\n', out_line, out_len - 1);
+    if (len == 0) return false;
+    out_line[len] = '\0';
+    if (len > 0 && out_line[len - 1] == '\r') {
+        out_line[len - 1] = '\0';
+    }
+    return true;
+}
+
+void hal_gnss_init(void) {
+    s_gnss_main.begin(GNSS_UART_BAUD, SERIAL_8N1, GNSS_MAIN_RX_PIN, GNSS_MAIN_TX_PIN);
+    s_gnss_heading.begin(GNSS_UART_BAUD, SERIAL_8N1, GNSS_HEADING_RX_PIN, GNSS_HEADING_TX_PIN);
+    hal_log("GNSS HAL: UART main rx=%d tx=%d, heading rx=%d tx=%d @%u",
+            GNSS_MAIN_RX_PIN, GNSS_MAIN_TX_PIN, GNSS_HEADING_RX_PIN, GNSS_HEADING_TX_PIN,
+            (unsigned)GNSS_UART_BAUD);
+}
+
+bool hal_gnss_main_read_line(char* out_line, size_t out_len) {
+    return hal_gnss_read_line_from_serial(s_gnss_main, out_line, out_len);
+}
+
+bool hal_gnss_heading_read_line(char* out_line, size_t out_len) {
+    return hal_gnss_read_line_from_serial(s_gnss_heading, out_line, out_len);
 }
 
 // ===================================================================

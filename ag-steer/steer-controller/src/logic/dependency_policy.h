@@ -12,6 +12,8 @@ namespace dep_policy {
 constexpr uint32_t WATCHDOG_TIMEOUT_MS = 2500;
 constexpr uint32_t STEER_ANGLE_FRESHNESS_TIMEOUT_MS = 300;
 constexpr uint32_t IMU_FRESHNESS_TIMEOUT_MS = 500;
+constexpr uint32_t GNSS_FIX_FRESHNESS_TIMEOUT_MS = 1200;
+constexpr float GNSS_MAX_HDOP = 4.5f;
 
 bool isFresh(uint32_t now_ms, uint32_t sample_ts_ms, uint32_t timeout_ms);
 
@@ -27,6 +29,9 @@ bool isSteerAngleInputValid(uint32_t now_ms,
 bool isImuInputValid(uint32_t now_ms,
                      uint32_t sample_ts_ms,
                      bool quality_ok);
+bool isGnssFixValid(uint32_t now_ms,
+                    uint32_t sample_ts_ms,
+                    uint8_t fix_quality,
+                    float hdop);
 
 }  // namespace dep_policy
-

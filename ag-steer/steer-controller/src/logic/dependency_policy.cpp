@@ -49,5 +49,13 @@ bool isImuInputValid(uint32_t now_ms,
     return quality_ok && isFresh(now_ms, sample_ts_ms, IMU_FRESHNESS_TIMEOUT_MS);
 }
 
-}  // namespace dep_policy
+bool isGnssFixValid(uint32_t now_ms,
+                    uint32_t sample_ts_ms,
+                    uint8_t fix_quality,
+                    float hdop) {
+    if (fix_quality == 0u) return false;
+    if (!std::isfinite(hdop) || hdop <= 0.0f || hdop > GNSS_MAX_HDOP) return false;
+    return isFresh(now_ms, sample_ts_ms, GNSS_FIX_FRESHNESS_TIMEOUT_MS);
+}
 
+}  // namespace dep_policy

@@ -25,6 +25,7 @@
 #include "logic/dependency_policy.h"
 #include "logic/features.h"
 #include "logic/global_state.h"
+#include "logic/gnss.h"
 #include "logic/hw_status.h"
 #include "logic/imu.h"
 #include "logic/modules.h"
@@ -153,7 +154,9 @@ static void commTaskFunc(void* param) {
     Serial.println("[DBG-COMM] wait done, entering poll loop");
 
     const TickType_t poll_interval = pdMS_TO_TICKS(10);  // 100 Hz polling
+    const TickType_t gnss_poll_interval = pdMS_TO_TICKS(20);  // 50 Hz GNSS polling
     TickType_t next_wake = xTaskGetTickCount();
+    TickType_t next_gnss_wake = next_wake;
 
     // Hardware status update runs at ~1 Hz
     static uint32_t s_last_hw_status_ms = 0;
@@ -169,6 +172,14 @@ static void commTaskFunc(void* param) {
 
         // -------------------------------- Processing --------------------------------
         modulesUpdateStatus();
+        if (feat::gnss()) {
+            const TickType_t now_ticks = xTaskGetTickCount();
+            if (now_ticks >= next_gnss_wake) {
+                gnss::pollMain();
+                gnss::pollHeading();
+                next_gnss_wake = now_ticks + gnss_poll_interval;
+            }
+        }
 
         // ---------------------------------- Output ----------------------------------
         netSendAogFrames();
@@ -195,6 +206,10 @@ static void commTaskFunc(void* param) {
             uint32_t steer_ts_ms = 0;
             bool imu_quality_ok = false;
             uint32_t imu_ts_ms = 0;
+            bool gnss_quality_ok = false;
+            uint32_t gnss_fix_ts_ms = 0;
+            uint8_t gnss_fix_quality = 0;
+            float gnss_hdop = 0.0f;
             {
                 StateLock lock;
                 safety_ok = g_nav.safety_ok;
@@ -202,6 +217,10 @@ static void commTaskFunc(void* param) {
                 steer_ts_ms = g_nav.steer_angle_timestamp_ms;
                 imu_quality_ok = g_nav.imu_quality_ok;
                 imu_ts_ms = g_nav.imu_timestamp_ms;
+                gnss_quality_ok = g_nav.gnss_quality_ok;
+                gnss_fix_ts_ms = g_nav.gnss_fix_timestamp_ms;
+                gnss_fix_quality = g_nav.gnss_fix_quality;
+                gnss_hdop = g_nav.gnss_hdop;
             }
 
             const bool steer_angle_valid =
@@ -210,6 +229,13 @@ static void commTaskFunc(void* param) {
             const bool imu_hw_detected = hw ? hw->imu_detected : false;
             const bool imu_data_valid =
                 imu_hw_detected && dep_policy::isImuInputValid(now, imu_ts_ms, imu_quality_ok);
+            const bool gnss_data_valid =
+                feat::gnss() &&
+                dep_policy::isGnssFixValid(now, gnss_fix_ts_ms, gnss_fix_quality, gnss_hdop);
+            if (feat::gnss()) {
+                StateLock lock;
+                g_nav.gnss_quality_ok = gnss_data_valid && gnss_quality_ok;
+            }
 
             // Hardware status monitoring via hw_status subsystem
             uint8_t err_count = hwStatusUpdate(
@@ -300,6 +326,11 @@ void setup() {
 
     // Initialise module system – detect hardware for all modules
     modulesInit();
+    if (feat::gnss()) {
+        gnss::init();
+    } else {
+        hal_log("Main: GNSS feature disabled");
+    }
 
     // Initialise control system (PID controller with default gains).
     // NOTE: HAL-level init (imu, steer angle, actuator) was already done

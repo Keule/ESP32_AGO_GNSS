@@ -225,6 +225,19 @@ bool hal_net_is_connected(void);
 /// Check if W5500 chip was detected during init.
 bool hal_net_detected(void);
 
+// ===================================================================
+// GNSS UART
+// ===================================================================
+
+/// Initialise GNSS UART interfaces (main + optional heading stream).
+void hal_gnss_init(void);
+
+/// Read one line from GNSS main UART (NMEA). Non-blocking.
+bool hal_gnss_main_read_line(char* out_line, size_t out_len);
+
+/// Read one line from GNSS heading UART (NMEA). Non-blocking.
+bool hal_gnss_heading_read_line(char* out_line, size_t out_len);
+
 #ifdef __cplusplus
 }
 #endif
