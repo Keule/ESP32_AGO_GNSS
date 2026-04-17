@@ -8,7 +8,8 @@ Kurzleitfaden für sauberes Arbeiten über Chats/Agenten/Umgebungen hinweg.
    - `docs/process/PLAN_AGENT.md`
    - `backlog/README.md`
 2. Task auswählen oder anlegen:
-   - bestehende `TASK-XXX` nutzen oder neue Task nach Schema erstellen.
+   - **Nur der KI-Planer** darf neue Tasks anlegen (Datei in `backlog/tasks/` + Eintrag in `backlog/index.yaml`).
+   - KI-Entwickler dürfen ausschließlich bestehende `TASK-XXX` auswählen und bearbeiten.
 3. Scope festziehen:
    - Was ist in scope / out of scope?
    - Welche Dateien werden voraussichtlich geändert?
@@ -84,8 +85,15 @@ Anschließend im `backlog/index.yaml` registrieren.
 1. Session-Templates nutzen:
    - `templates/session-start.md`
    - `templates/session-progress.md`
-2. Bei Architektur-/Prozessentscheidungen:
+2. Entwickler-Report pro Task verpflichtend:
+   - Report unter `reports/<Task-ID>/<dev-name>.md` anlegen.
+   - Verbindliches Template: `templates/dev-report.md`.
+   - Auswertung/Integration erfolgt durch Reviewer/Mensch.
+3. Bei Architektur-/Prozessentscheidungen:
    - ADR erfassen (`templates/adr.md`).
+4. Rollenregel für Änderungen:
+   - KI-Entwickler ändern keine Prozess- oder Doku-Dateien.
+   - Prozess-/Doku-Änderungen obliegen KI-Planer, KI-Reviewer und Mensch.
 
 ## 5) Session-Ende / Handover
 1. `templates/session-handover.md` ausfüllen:
