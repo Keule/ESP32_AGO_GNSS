@@ -14,6 +14,16 @@ Kurzleitfaden für sauberes Arbeiten über Chats/Agenten/Umgebungen hinweg.
    - Was ist in scope / out of scope?
    - Welche Dateien werden voraussichtlich geändert?
 
+## 1a) Pre-Work-Check (verpflichtend, vor der ersten Änderung)
+1. Task-Kontext prüfen (Task-ID einsetzen):
+   - `python3 tools/check_task_context.py --task-id <Task-ID>`
+2. Erwartetes Ergebnis:
+   - aktueller Branch ist exakt `task/<Task-ID>`.
+   - Verzeichnis `reports/<Task-ID>/` existiert.
+3. Bei Abweichung **sofort stoppen und eskalieren**:
+   - falscher Branch (z. B. `gnss_integration`) ist für Task-Arbeit nicht zulässig.
+   - fehlender Report-Ordner muss vor Start angelegt oder durch Planer/Verantwortliche geklärt werden.
+
 ## 2) Planung vor Umsetzung
 1. Task klassifizieren:
    - `independent` oder `dependent`.
@@ -109,6 +119,14 @@ Ein Task gilt für KI-Entwickler **nur dann** als `done`, wenn ein vollständige
 2. Task-Status aktualisieren.
 3. Referenzen dokumentieren:
    - betroffene Dateien, Commits/PR, offene Risiken.
+
+## 5a) Optionaler PR-/CI-Check für Task-Branches
+- Ziel: PRs mit Task-Arbeit auf `gnss_integration` verhindern.
+- Manuell vor PR:
+  - `python3 tools/check_task_context.py --task-id <Task-ID>`
+- Optional in CI (Beispielidee):
+  - bei Task-PRs den Check als Pflichtschritt ausführen,
+  - Build fehlschlagen lassen, wenn Branch nicht `task/<Task-ID>` ist oder `reports/<Task-ID>/` fehlt.
 
 ## 6) Umgebungswechsel (Codex ↔ ChatGPT ↔ z.ai)
 Beim Wechsel immer aktiv mitgeben:
