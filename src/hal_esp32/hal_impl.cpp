@@ -31,10 +31,10 @@
 #include "hardware_pins.h"
 #include "logic/pgn_types.h"
 #include "logic/log_config.h"
-#include "logic/log_ext.h"
 
 #define LOG_LOCAL_LEVEL LOG_LEVEL_HAL
 #include "esp_log.h"
+#include "logic/log_ext.h"
 
 // ===================================================================
 // Arduino / ESP32 includes
@@ -1372,12 +1372,6 @@ int hal_net_receive_rtcm(uint8_t* buf, size_t max_len, uint16_t* out_port) {
         *out_port = static_cast<uint16_t>(ethUDP_rtcm.remotePort());
     }
     return read;
-}
-
-size_t hal_gnss_rtcm_write(const uint8_t* data, size_t len) {
-    (void)data;
-    // TODO: route to dedicated GNSS UART when GNSS HAL is integrated.
-    return len;
 }
 
 bool hal_net_is_connected(void) {
