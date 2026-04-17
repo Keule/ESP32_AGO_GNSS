@@ -61,6 +61,7 @@ struct NavigationState {
 
     // --- Steering config from AgIO (PGN 251) ---
     uint8_t  config_set0;           // hardware config bits from AgIO
+    uint8_t  config_set1;           // secondary hardware config bits from AgIO
     uint8_t  config_max_pulse;      // pulse count max threshold
     uint8_t  config_min_speed;      // minimum speed for steering
     bool     config_received;       // true after first config from AgIO

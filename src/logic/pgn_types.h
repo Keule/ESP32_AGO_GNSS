@@ -275,13 +275,13 @@ static_assert(sizeof(AogSteerSettingsIn) == 8, "AogSteerSettingsIn must be 8 byt
 ///     bit6: SteerButton, bit7: ShaftEncoder
 ///   [1]   MaxPulse     uint8  pulse count max threshold
 ///   [2]   MinSpeed     uint8  minimum speed for steering
-///   [3]   AckermanFix  uint8  Ackerman fix percentage
+///   [3]   Set1         uint8  secondary config bits (legacy name: AckermanFix)
 ///   [4-7] Reserved     uint8  spare bytes
 struct __attribute__((packed)) AogSteerConfigIn {
     uint8_t  set0;             // [0] configuration bits
     uint8_t  maxPulse;         // [1] pulse count max threshold
     uint8_t  minSpeed;         // [2] minimum speed for steering
-    uint8_t  ackermanFix;      // [3] Ackerman fix percentage
+    uint8_t  ackermanFix;      // [3] secondary config bitfield (set1 in AOG ref FW)
     uint8_t  reserved[4];      // [4-7] spare bytes
 };
 static_assert(sizeof(AogSteerConfigIn) == 8, "AogSteerConfigIn must be 8 bytes");
