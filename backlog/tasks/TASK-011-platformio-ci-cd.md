@@ -26,4 +26,4 @@
 - **Links**:
   - `docs/Handover2.md#8-offene-aufgaben--todos`
   - `backlog/epics/EPIC-003-platform-and-reuse.md`
-- **execution_mode**: firmware_only
+- **delivery_mode**: firmware_only

@@ -10,7 +10,7 @@ enums:
     - high
     - medium
     - low
-  execution_mode:
+  delivery_mode:
     - hardware_required
     - firmware_only
     - mixed
@@ -60,7 +60,7 @@ tasks:
     epic_id: EPIC-001
     status: open
     priority: high
-    execution_mode: hardware_required
+    delivery_mode: hardware_required
     task_category: runtime_stability
     dependencies: []
 
@@ -70,7 +70,7 @@ tasks:
     epic_id: EPIC-001
     status: open
     priority: high
-    execution_mode: firmware_only
+    delivery_mode: firmware_only
     task_category: runtime_stability
     dependencies:
       - TASK-001
@@ -81,7 +81,7 @@ tasks:
     epic_id: EPIC-001
     status: open
     priority: high
-    execution_mode: mixed
+    delivery_mode: mixed
     task_category: runtime_stability
     dependencies: []
 
@@ -91,7 +91,7 @@ tasks:
     epic_id: EPIC-002
     status: open
     priority: medium
-    execution_mode: hardware_required
+    delivery_mode: hardware_required
     task_category: sensor_safety
     dependencies: []
 
@@ -101,7 +101,7 @@ tasks:
     epic_id: EPIC-002
     status: open
     priority: medium
-    execution_mode: mixed
+    delivery_mode: mixed
     task_category: sensor_safety
     dependencies:
       - TASK-001
@@ -112,7 +112,7 @@ tasks:
     epic_id: EPIC-003
     status: open
     priority: medium
-    execution_mode: firmware_only
+    delivery_mode: firmware_only
     task_category: platform_reuse
     dependencies:
       - TASK-003
@@ -123,7 +123,7 @@ tasks:
     epic_id: EPIC-004
     status: open
     priority: low
-    execution_mode: mixed
+    delivery_mode: mixed
     task_category: feature_expansion
     dependencies:
       - TASK-006
@@ -134,7 +134,7 @@ tasks:
     epic_id: EPIC-004
     status: open
     priority: low
-    execution_mode: firmware_only
+    delivery_mode: firmware_only
     task_category: feature_expansion
     dependencies:
       - TASK-006
@@ -145,7 +145,7 @@ tasks:
     epic_id: EPIC-004
     status: open
     priority: low
-    execution_mode: firmware_only
+    delivery_mode: firmware_only
     task_category: feature_expansion
     dependencies:
       - TASK-006
@@ -156,7 +156,7 @@ tasks:
     epic_id: EPIC-004
     status: open
     priority: low
-    execution_mode: firmware_only
+    delivery_mode: firmware_only
     task_category: feature_expansion
     dependencies:
       - TASK-003
@@ -167,7 +167,7 @@ tasks:
     epic_id: EPIC-003
     status: open
     priority: low
-    execution_mode: firmware_only
+    delivery_mode: firmware_only
     task_category: platform_reuse
     dependencies: []
 

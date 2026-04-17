@@ -33,7 +33,7 @@ def main() -> int:
     tasks = data.get("tasks", [])
     epics = data.get("epics", [])
 
-    required_enums = ("status", "priority", "execution_mode", "task_category")
+    required_enums = ("status", "priority", "delivery_mode", "task_category")
     for enum_name in required_enums:
         values = enums.get(enum_name)
         if not isinstance(values, list) or not values:
@@ -51,7 +51,7 @@ def main() -> int:
         for field, enum_name in (
             ("status", "status"),
             ("priority", "priority"),
-            ("execution_mode", "execution_mode"),
+            ("delivery_mode", "delivery_mode"),
             ("task_category", "task_category"),
         ):
             value = task.get(field)
