@@ -10,6 +10,47 @@ Dieses Dokument definiert, wie ein Plan-Agent Aufgaben in **unabhängige** und *
 
 ---
 
+## Rollen und Verantwortlichkeiten
+
+### Mensch
+
+- Trifft strategische Entscheidungen und priorisiert den Entwicklungszweig.
+- Bestätigt finale Merges in den Entwicklungszweig.
+- Pflegt übergreifende Dokumentation und Backlog bei Bedarf.
+- Darf Prozess- und Doku-Dateien ändern.
+
+### KI-Planer
+
+- Legt als einzige Rolle neue Tasks im Backlog an (`backlog/tasks/` + `backlog/index.yaml`).
+- Klassifiziert Tasks (`independent`/`dependent`) und setzt `exclusive_before`/`parallelizable_after`.
+- Identifiziert Dateifootprints und `merge_risk_files`.
+- Erstellt pro Task einen Branch `task/<Task-ID>` vom aktuellen Entwicklungszweig.
+- Darf Planungs-, Prozess- und Backlog-Dateien ändern.
+
+### KI-Entwickler
+
+- Arbeitet ausschließlich auf einem zugewiesenen `task/<Task-ID>`-Branch.
+- Darf nur Code-Artefakte ändern (Source, Skripte, Konfiguration).
+- Darf keine Prozess- oder Doku-Dateien ändern.
+- Muss pro Task einen Report unter `reports/<Task-ID>/<dev-name>.md` anlegen und dafür das verbindliche Template `templates/dev-report.md` verwenden.
+
+### KI-Reviewer
+
+- Prüft PRs der Entwickler gegen `task/<Task-ID>`.
+- Extrahiert Informationen aus den Entwickler-Reports und integriert sie in Doku/Backlog.
+- Darf keine Codeänderungen vornehmen.
+
+## Task- und Branch-Workflow
+
+1. Der KI-Planer erstellt die Task-Datei in `backlog/tasks/` und ergänzt den Eintrag in `backlog/index.yaml`; dabei werden `independent`/`dependent` sowie `exclusive_before`/`parallelizable_after` gesetzt.
+2. Der KI-Planer erstellt den Branch `task/<Task-ID>` vom aktuellen Entwicklungszweig.
+3. KI-Entwickler checken den Task-Branch aus, ändern ausschließlich Code und legen ihren Report unter `reports/<Task-ID>/<dev-name>.md` gemäß `templates/dev-report.md` an.
+4. KI-Entwickler eröffnen Pull Requests gegen den jeweiligen Task-Branch (nicht gegen `main` oder `gnss_integration`).
+5. KI-Reviewer und Mensch sichten die PRs, werten die Reports aus, integrieren die Erkenntnisse in Dokumentation/Backlog und schließen den Task.
+6. Nach Abschluss wird der Task-Branch in den Entwicklungszweig (`gnss_integration`) gemergt.
+
+---
+
 ## 1) Datei-Footprint-Analyse
 
 Vor jeder Planung muss ein **Datei-Footprint** je Task erstellt werden.
