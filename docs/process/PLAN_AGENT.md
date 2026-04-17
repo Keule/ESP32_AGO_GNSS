@@ -42,6 +42,12 @@ Dieses Dokument definiert, wie ein Plan-Agent Aufgaben in **unabhängige** und *
 
 ## Task- und Branch-Workflow
 
+### Verbindlicher Start-Handshake (vor jeder Implementierung)
+
+1. **KI-Planer erstellt den Task-Branch:** `task/<Task-ID>` vom aktuellen Entwicklungszweig.
+2. **KI-Entwickler bestätigt den exakten Branchnamen**, bevor die erste Codeänderung erfolgt (z. B. über `git branch --show-current` oder den Repo-Check unter `tools/check_task_context.py`).
+3. **Ohne bestätigten Branchname keine Umsetzung starten.** Bei Abweichung sofort stoppen und an Mensch/KI-Planer eskalieren.
+
 1. Der KI-Planer erstellt die Task-Datei in `backlog/tasks/` und ergänzt den Eintrag in `backlog/index.yaml`; dabei werden `independent`/`dependent` sowie `exclusive_before`/`parallelizable_after` gesetzt.
 2. Der KI-Planer erstellt den Branch `task/<Task-ID>` vom aktuellen Entwicklungszweig.
 3. KI-Entwickler checken den Task-Branch aus, ändern ausschließlich Code und legen ihren Report unter `reports/<Task-ID>/<dev-name>.md` gemäß `templates/dev-report.md` an.
