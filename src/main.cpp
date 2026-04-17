@@ -21,6 +21,7 @@
 #include <esp_ota_ops.h>
 #include <cstdio>
 
+#include "hardware_pins.h"
 #include "hal/hal.h"
 #include "hal_esp32/hal_impl.h"
 #include "logic/control.h"
@@ -71,22 +72,6 @@ static inline bool shouldLogPeriodic(uint32_t now_ms, uint32_t* last_ms, uint32_
 static constexpr bool MAIN_GNSS_UART_MIRROR_ENABLED = true;
 #else
 static constexpr bool MAIN_GNSS_UART_MIRROR_ENABLED = false;
-#endif
-
-#ifndef GNSS_MIRROR_BAUD
-#define GNSS_MIRROR_BAUD 115200
-#endif
-#ifndef GNSS_MIRROR_UART1_RX_PIN
-#define GNSS_MIRROR_UART1_RX_PIN 44
-#endif
-#ifndef GNSS_MIRROR_UART1_TX_PIN
-#define GNSS_MIRROR_UART1_TX_PIN -1
-#endif
-#ifndef GNSS_MIRROR_UART2_RX_PIN
-#define GNSS_MIRROR_UART2_RX_PIN 2
-#endif
-#ifndef GNSS_MIRROR_UART2_TX_PIN
-#define GNSS_MIRROR_UART2_TX_PIN -1
 #endif
 
 static constexpr size_t MAIN_GNSS_MIRROR_LINE_CAP = 96;
