@@ -21,7 +21,7 @@ Jede Datei in `backlog/tasks/` muss folgende Felder enthalten:
 - **AC**: Akzeptanzkriterien als prüfbare Bullet-Liste.
 - **Owner**: Verantwortliche Rolle oder Person.
 - **Links**: Verweise auf relevante Dokumente/Dateien.
-- **execution_mode**: Art der Durchführung:
+- **delivery_mode**: Art der Durchführung:
   - `hardware_required`: Reale Hardware/Flash/Test nötig.
   - `firmware_only`: Reine Firmware-/Code-Änderung.
   - `mixed`: Kombination aus Firmware und Hardwarevalidierung.

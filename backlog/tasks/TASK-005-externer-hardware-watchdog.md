@@ -15,4 +15,4 @@
 - **Links**:
   - docs/Handover2.md#8-offene-aufgaben--todos
   - backlog/epics/EPIC-002-sensor-and-safety.md
-- **execution_mode**: mixed
+- **delivery_mode**: mixed

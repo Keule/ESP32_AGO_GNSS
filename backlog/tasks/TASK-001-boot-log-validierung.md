@@ -16,4 +16,4 @@
 - **Links**:
   - docs/Handover2.md#8-offene-aufgaben--todos
   - backlog/epics/EPIC-001-runtime-stability.md
-- **execution_mode**: hardware_required
+- **delivery_mode**: hardware_required
