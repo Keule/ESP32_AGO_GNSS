@@ -13,6 +13,7 @@ Dieses Repository ist der **kanonische Einstieg** für das Projekt `ZAI_GPS`.
    - [`docs/Handover1.md`](docs/Handover1.md) (historisch)
 3. **Prozessregeln und Arbeitsprinzipien:**
    - [`docs/plans/P1-dependent-api-freeze-und-crc-grenze.md`](docs/plans/P1-dependent-api-freeze-und-crc-grenze.md)
+   - [`docs/process/PLAN_AGENT.md`](docs/process/PLAN_AGENT.md)
 4. **Backlog/Arbeitsverlauf:**
    - [`worklog.md`](worklog.md)
 5. **Standard-Templates für Doku/Übergaben:**
@@ -43,6 +44,7 @@ Dieses Repository ist der **kanonische Einstieg** für das Projekt `ZAI_GPS`.
   - [`docs/Handover1.md`](docs/Handover1.md)
 - **Prozess:**
   - [`docs/plans/P1-dependent-api-freeze-und-crc-grenze.md`](docs/plans/P1-dependent-api-freeze-und-crc-grenze.md)
+  - [`docs/process/PLAN_AGENT.md`](docs/process/PLAN_AGENT.md)
 - **Backlog:**
   - [`worklog.md`](worklog.md)
 - **Templates:**
