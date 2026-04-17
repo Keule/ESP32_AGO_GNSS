@@ -29,6 +29,11 @@
 /// Reference disables steering below 0.1 km/h for safety.
 constexpr float MIN_STEER_SPEED_KMH = 0.1f;
 
+/// Hard command limits for the 48V motor stage.
+constexpr uint16_t ACTUATOR_PWM_ABSOLUTE_MAX = 220;
+constexpr uint16_t ACTUATOR_RAMP_STEP_PER_CYCLE = 8;
+constexpr uint32_t STEER_DATA_FRESHNESS_TIMEOUT_MS = 300;
+
 // ===================================================================
 // Globals – actual definition in global_state.cpp
 // ===================================================================
@@ -36,6 +41,46 @@ constexpr float MIN_STEER_SPEED_KMH = 0.1f;
 /// PID instance for steering
 static PidState s_steer_pid;
 static uint32_t s_last_was_diag_ms = 0;
+static uint16_t s_last_actuator_cmd = 0;
+
+enum class GateBlockReason : uint8_t {
+    None = 0,
+    Safety,
+    AutoSteerDisabled,
+    WatchdogTimeout,
+    SpeedBelowMinimum,
+    DataStale,
+    SteerSensorInvalid,
+};
+
+static const char* gateBlockReasonToStr(GateBlockReason reason) {
+    switch (reason) {
+        case GateBlockReason::None: return "NONE";
+        case GateBlockReason::Safety: return "SAFETY";
+        case GateBlockReason::AutoSteerDisabled: return "AUTO_STEER_OFF";
+        case GateBlockReason::WatchdogTimeout: return "WATCHDOG";
+        case GateBlockReason::SpeedBelowMinimum: return "SPEED";
+        case GateBlockReason::DataStale: return "STALE_DATA";
+        case GateBlockReason::SteerSensorInvalid: return "STEER_SENSOR";
+        default: return "UNKNOWN";
+    }
+}
+
+static uint16_t clampActuatorCmd(uint16_t cmd) {
+    return (cmd > ACTUATOR_PWM_ABSOLUTE_MAX) ? ACTUATOR_PWM_ABSOLUTE_MAX : cmd;
+}
+
+static uint16_t applyRampLimit(uint16_t previous_cmd, uint16_t target_cmd) {
+    if (target_cmd > previous_cmd) {
+        const uint16_t max_up = static_cast<uint16_t>(previous_cmd + ACTUATOR_RAMP_STEP_PER_CYCLE);
+        return target_cmd > max_up ? max_up : target_cmd;
+    }
+
+    const uint16_t max_down = (previous_cmd > ACTUATOR_RAMP_STEP_PER_CYCLE)
+        ? static_cast<uint16_t>(previous_cmd - ACTUATOR_RAMP_STEP_PER_CYCLE)
+        : 0u;
+    return target_cmd < max_down ? max_down : target_cmd;
+}
 
 // ===================================================================
 // PID Implementation
@@ -186,6 +231,8 @@ void controlStep(void) {
         uint16_t actuator_cmd = 0;
         bool watchdog_triggered = false;
         bool reset_pid = false;
+        bool gate_enabled = false;
+        GateBlockReason gate_block_reason = GateBlockReason::None;
     };
 
     // ----------------------------------------------------------
@@ -223,12 +270,53 @@ void controlStep(void) {
     // Arm watchdog only after first valid PGN 254 heartbeat was received.
     out.watchdog_triggered = (in.watchdog_timer_ms != 0u) &&
                              (in.now_ms - in.watchdog_timer_ms > dep_policy::WATCHDOG_TIMEOUT_MS);
+    const bool steer_data_fresh = dep_policy::isFresh(
+        in.now_ms, in.watchdog_timer_ms, STEER_DATA_FRESHNESS_TIMEOUT_MS);
+    const bool steer_sensor_quality_ok =
+        dep_policy::isSteerAnglePlausible(in.current_angle_deg) &&
+        dep_policy::isSteerAngleRawPlausible(in.steer_raw);
 
-    if (!in.safety_ok || !in.auto_steer_enabled ||
-        out.watchdog_triggered || in.gps_speed_kmh < MIN_STEER_SPEED_KMH) {
+    if (!in.safety_ok) {
+        out.gate_block_reason = GateBlockReason::Safety;
+    } else if (!in.auto_steer_enabled) {
+        out.gate_block_reason = GateBlockReason::AutoSteerDisabled;
+    } else if (out.watchdog_triggered) {
+        out.gate_block_reason = GateBlockReason::WatchdogTimeout;
+    } else if (in.gps_speed_kmh < MIN_STEER_SPEED_KMH) {
+        out.gate_block_reason = GateBlockReason::SpeedBelowMinimum;
+    } else if (!steer_data_fresh) {
+        out.gate_block_reason = GateBlockReason::DataStale;
+    } else if (!steer_sensor_quality_ok) {
+        out.gate_block_reason = GateBlockReason::SteerSensorInvalid;
+    } else {
+        out.gate_enabled = true;
+    }
+
+    static bool s_prev_gate_enabled = false;
+    static GateBlockReason s_prev_gate_reason = GateBlockReason::None;
+
+    if (!out.gate_enabled) {
         out.actuator_cmd = 0;
         out.reset_pid = true;
+
+        if (s_prev_gate_enabled || s_prev_gate_reason != out.gate_block_reason) {
+            LOGW("CTL", "gate OFF reason=%s safety=%d auto=%d watchdog=%d speed=%.2f dataFresh=%d",
+                    gateBlockReasonToStr(out.gate_block_reason),
+                    in.safety_ok ? 1 : 0,
+                    in.auto_steer_enabled ? 1 : 0,
+                    out.watchdog_triggered ? 1 : 0,
+                    (double)in.gps_speed_kmh,
+                    steer_data_fresh ? 1 : 0);
+        }
     } else {
+        if (!s_prev_gate_enabled) {
+            LOGI("CTL", "gate ON safety=%d auto=%d speed=%.2f dataFresh=%d",
+                    in.safety_ok ? 1 : 0,
+                    in.auto_steer_enabled ? 1 : 0,
+                    (double)in.gps_speed_kmh,
+                    steer_data_fresh ? 1 : 0);
+        }
+
         float error = in.setpoint_deg - in.current_angle_deg;
         while (error > 180.0f)  error -= 360.0f;
         while (error < -180.0f) error += 360.0f;
@@ -238,8 +326,13 @@ void controlStep(void) {
         s_steer_pid.last_update_ms = in.now_ms;
 
         const float output = pidCompute(&s_steer_pid, error, dt);
-        out.actuator_cmd = static_cast<uint16_t>(output);
+        const uint16_t raw_cmd = static_cast<uint16_t>(output);
+        const uint16_t clamped_cmd = clampActuatorCmd(raw_cmd);
+        out.actuator_cmd = applyRampLimit(s_last_actuator_cmd, clamped_cmd);
     }
+
+    s_prev_gate_enabled = out.gate_enabled;
+    s_prev_gate_reason = out.gate_block_reason;
 
     // ----------------------------------------------------------
     // Output phase (single writer update + actuator command)
@@ -249,6 +342,7 @@ void controlStep(void) {
     }
 
     actuatorWriteCommand(out.actuator_cmd);
+    s_last_actuator_cmd = out.actuator_cmd;
 
     {
         const bool steer_quality_ok =
