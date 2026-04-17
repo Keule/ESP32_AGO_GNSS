@@ -28,6 +28,7 @@
 #include "control.h"
 #include "dependency_policy.h"
 #include "global_state.h"
+#include "steer_config_bits.h"
 #include "hal/hal.h"
 
 #include "log_config.h"
@@ -45,6 +46,41 @@ constexpr uint8_t STATUS_BIT_STEER_SWITCH  = 0x02;  // bit 1
 constexpr uint8_t STATUS_BIT_STEER_ON      = 0x04;  // bit 2
 constexpr int16_t STEER_STATUS_HEADING_INVALID_X10 = 9999;
 constexpr int16_t STEER_STATUS_ROLL_INVALID_X10 = 8888;
+
+struct ConfigBitMapping {
+    uint8_t mask;
+    const char* name;
+    const char* behavior;
+};
+
+static const ConfigBitMapping kSet0BitMap[] = {
+    {steer_cfg_set0::INVERT_WAS,            "set0.bit0 InvertWAS",            "WAS signal polarity invert"},
+    {steer_cfg_set0::RELAY_ACTIVE_HIGH,     "set0.bit1 RelayActiveHigh",      "DRV enable polarity active-high"},
+    {steer_cfg_set0::MOTOR_DRIVE_DIRECTION, "set0.bit2 MotorDriveDirection",  "motor drive direction invert"},
+    {steer_cfg_set0::SINGLE_INPUT_WAS,      "set0.bit3 SingleInputWAS",       "single-ended WAS mode"},
+    {steer_cfg_set0::CYTRON_DRIVER,         "set0.bit4 CytronDriver",         "DRV type Cytron (else IBT2-like)"},
+    {steer_cfg_set0::STEER_SWITCH,          "set0.bit5 SteerSwitch",          "external steer switch input enabled"},
+    {steer_cfg_set0::STEER_BUTTON,          "set0.bit6 SteerButton",          "momentary steer button mode"},
+    {steer_cfg_set0::SHAFT_ENCODER,         "set0.bit7 ShaftEncoder",         "shaft encoder pulse protection"},
+};
+
+static const ConfigBitMapping kSet1BitMap[] = {
+    {steer_cfg_set1::DANFOSS_VALVE,   "set1.bit0 DanfossValve",   "DRV output for Danfoss valve"},
+    {steer_cfg_set1::PRESSURE_SENSOR, "set1.bit1 PressureSensor", "pressure sensor channel enabled"},
+    {steer_cfg_set1::CURRENT_SENSOR,  "set1.bit2 CurrentSensor",  "current sensor channel enabled"},
+    {steer_cfg_set1::USE_Y_AXIS,      "set1.bit3 UseYAxis",       "IMU axis remap for steering"},
+};
+
+static void logSteerConfigMap(const char* set_name,
+                              uint8_t raw,
+                              const ConfigBitMapping* table,
+                              size_t table_len) {
+    for (size_t i = 0; i < table_len; ++i) {
+        const bool enabled = (raw & table[i].mask) != 0u;
+        LOGI("NET", "%s %s=%u -> %s",
+             set_name, table[i].name, enabled ? 1u : 0u, table[i].behavior);
+    }
+}
 
 // ===================================================================
 // Send interval tracking
@@ -190,22 +226,36 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
         case aog_pgn::STEER_CONFIG_IN: {
             AogSteerConfigIn config;
             if (pgnDecodeSteerConfigIn(payload, payload_len, &config)) {
-                LOGI("NET", "SteerConfig received (set0=0x%02X pulse=%u speed=%u ackFix=%u)",
+                const uint8_t set0 = config.set0;
+                const uint8_t set1 = config.ackermanFix;  // byte 3 is setting1 in AOG reference FW.
+                const uint8_t unknown_set0 = set0 & static_cast<uint8_t>(~steer_cfg_set0::KNOWN_MASK);
+                const uint8_t unknown_set1 = set1 & static_cast<uint8_t>(~steer_cfg_set1::KNOWN_MASK);
+                const uint8_t applied_set0 = set0 & steer_cfg_set0::KNOWN_MASK;
+                const uint8_t applied_set1 = set1 & steer_cfg_set1::KNOWN_MASK;
+
+                LOGI("NET", "SteerConfig received (set0=0x%02X pulse=%u speed=%u set1=0x%02X)",
                         (unsigned)config.set0, (unsigned)config.maxPulse,
-                        (unsigned)config.minSpeed, (unsigned)config.ackermanFix);
+                        (unsigned)config.minSpeed, (unsigned)set1);
+
+                logSteerConfigMap("CFG", applied_set0, kSet0BitMap, sizeof(kSet0BitMap) / sizeof(kSet0BitMap[0]));
+                logSteerConfigMap("CFG", applied_set1, kSet1BitMap, sizeof(kSet1BitMap) / sizeof(kSet1BitMap[0]));
+
+                if (unknown_set0 != 0u) {
+                    LOGW("NET", "SteerConfig set0 unknown bits 0x%02X ignored", (unsigned)unknown_set0);
+                }
+                if (unknown_set1 != 0u) {
+                    LOGW("NET", "SteerConfig set1 unknown bits 0x%02X ignored", (unsigned)unknown_set1);
+                }
 
                 // Store config in global state for future use
                 {
                     StateLock lock;
-                    g_nav.config_set0      = config.set0;
+                    g_nav.config_set0      = applied_set0;
+                    g_nav.config_set1      = applied_set1;
                     g_nav.config_max_pulse = config.maxPulse;
                     g_nav.config_min_speed = config.minSpeed;
                     g_nav.config_received  = true;
                 }
-
-                // TODO: apply hardware config bits (invert WAS, relay polarity,
-                // motor direction, Cytron driver mode, etc.)
-                // Reference does a hard reset after config – we log only for now.
             }
             break;
         }

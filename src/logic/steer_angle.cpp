@@ -8,6 +8,7 @@
 #include "steer_angle.h"
 #include "dependency_policy.h"
 #include "global_state.h"
+#include "steer_config_bits.h"
 #include "hal/hal.h"
 
 #include "log_config.h"
@@ -22,6 +23,12 @@ void steerAngleInit(void) {
 
 float steerAngleReadDeg(void) {
     float angle = hal_steer_angle_read_deg();
+    {
+        StateLock lock;
+        if ((g_nav.config_set0 & steer_cfg_set0::INVERT_WAS) != 0u) {
+            angle = -angle;
+        }
+    }
     const uint32_t now_ms = hal_millis();
     const bool plausible = dep_policy::isSteerAnglePlausible(angle);
 
