@@ -48,6 +48,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 // ---------------------------------------------------------------------------
 // SPI Bus 1: Ethernet - W5500 (managed by ESP-IDF ETH driver on SPI3_HOST)
 // These pins are fixed by the board design - DO NOT CHANGE.
@@ -126,6 +128,13 @@
 #define GNSS_UART1_RX   45
 #define GNSS_UART2_TX    2
 #define GNSS_UART2_RX    1
+
+// GNSS console mirror defaults (diagnostic read-only sniffing in gnss_buildup)
+inline constexpr uint32_t GNSS_MIRROR_BAUD = 115200;
+inline constexpr int8_t GNSS_MIRROR_UART1_RX_PIN = 44;
+inline constexpr int8_t GNSS_MIRROR_UART1_TX_PIN = -1;
+inline constexpr int8_t GNSS_MIRROR_UART2_RX_PIN = 2;
+inline constexpr int8_t GNSS_MIRROR_UART2_TX_PIN = -1;
 
 // Optional GNSS sideband lines (not wired on current board revision)
 #define GNSS1_PPS_PIN   -1

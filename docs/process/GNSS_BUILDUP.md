@@ -15,17 +15,12 @@ Aus `platformio.ini` (Environment `gnss_buildup`):
 
 ### Aktiviert
 - `FEAT_PROFILE_COMM_ONLY`
-- `FEAT_COMM`
-- `FEAT_GNSS`
 - `FEAT_GNSS_BUILDUP`
 - `FEAT_GNSS_UART_MIRROR`
 
 ### Parametrierung
-- `GNSS_MIRROR_BAUD=115200`
-- `GNSS_MIRROR_UART1_RX_PIN=44`
-- `GNSS_MIRROR_UART1_TX_PIN=-1`
-- `GNSS_MIRROR_UART2_RX_PIN=2`
-- `GNSS_MIRROR_UART2_TX_PIN=-1`
+- Keine Pin-/Baudwerte über `-D...` im Buildprofil.
+- GNSS-Mirror-Pins und Baudrate sind zentral in `include/hardware_pins.h` definiert.
 
 ### Deaktiviert (implizit, da im Profil nicht gesetzt)
 - Steering-Sensorik/Aktorik-Vollpfad
@@ -66,3 +61,7 @@ Board-Constraints:
 
 Diese Seite ist die normative Betriebs- und Prüfbasis für `gnss_buildup`.
 Handover-Dokumente dürfen ergänzen, aber nicht diese Vorgaben ersetzen.
+
+## Grundsatz (verbindlich)
+
+**Pinbelegung gehört in die zentrale Hardware-Konfiguration, nicht in Build-Flags.**
