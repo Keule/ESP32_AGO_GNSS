@@ -15,7 +15,8 @@ Dieses Repository ist der **kanonische Einstieg** für das Projekt `ZAI_GPS`.
    - [`docs/plans/P1-dependent-api-freeze-und-crc-grenze.md`](docs/plans/P1-dependent-api-freeze-und-crc-grenze.md)
    - [`docs/process/PLAN_AGENT.md`](docs/process/PLAN_AGENT.md)
 4. **Backlog/Arbeitsverlauf:**
-   - [`worklog.md`](worklog.md)
+   - [`backlog/README.md`](backlog/README.md)
+   - optional direkt: [`backlog/index.yaml`](backlog/index.yaml)
 5. **Standard-Templates für Doku/Übergaben:**
    - [`templates/session-start.md`](templates/session-start.md)
    - [`templates/session-progress.md`](templates/session-progress.md)
@@ -33,7 +34,7 @@ Dieses Repository ist der **kanonische Einstieg** für das Projekt `ZAI_GPS`.
      - [`docs/plans/P1-dependent-api-freeze-und-crc-grenze.md`](docs/plans/P1-dependent-api-freeze-und-crc-grenze.md)
      - [`docs/protocol/README.md`](docs/protocol/README.md)
 3. **Dann in dieser Reihenfolge arbeiten:**
-   - Architektur (`ADR-001`) → Handover (`Handover2`) → Prozess (`P1-Plan`) → Backlog (`worklog.md`).
+   - Architektur (`ADR-001`) → Handover (`Handover2`) → Prozess (`P1-Plan`) → Backlog (`backlog/README.md`, optional `backlog/index.yaml`).
 
 ## Konsistente Einstiege nach Thema
 
@@ -46,7 +47,8 @@ Dieses Repository ist der **kanonische Einstieg** für das Projekt `ZAI_GPS`.
   - [`docs/plans/P1-dependent-api-freeze-und-crc-grenze.md`](docs/plans/P1-dependent-api-freeze-und-crc-grenze.md)
   - [`docs/process/PLAN_AGENT.md`](docs/process/PLAN_AGENT.md)
 - **Backlog:**
-  - [`worklog.md`](worklog.md)
+  - [`backlog/README.md`](backlog/README.md)
+  - optional direkt: [`backlog/index.yaml`](backlog/index.yaml)
 - **Templates:**
   - [`templates/session-start.md`](templates/session-start.md)
   - [`templates/session-progress.md`](templates/session-progress.md)
