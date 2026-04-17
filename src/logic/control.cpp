@@ -12,6 +12,7 @@
 #include "steer_angle.h"
 #include "actuator.h"
 #include "global_state.h"
+#include "steer_config_bits.h"
 #include "hal/hal.h"
 
 #include "log_config.h"
@@ -180,6 +181,8 @@ void controlStep(void) {
         float setpoint_deg = 0.0f;
         float current_angle_deg = 0.0f;
         int16_t steer_raw = 0;
+        uint8_t config_set0 = 0;
+        uint8_t config_min_speed = 0;
     };
 
     struct ControlOutputSnapshot {
@@ -214,6 +217,8 @@ void controlStep(void) {
         in.auto_steer_enabled = g_nav.work_switch && g_nav.steer_switch;
         in.gps_speed_kmh = g_nav.gps_speed_kmh;
         in.watchdog_timer_ms = g_nav.watchdog_timer_ms;
+        in.config_set0 = g_nav.config_set0;
+        in.config_min_speed = g_nav.config_min_speed;
     }
 
     // ----------------------------------------------------------
@@ -224,14 +229,22 @@ void controlStep(void) {
     out.watchdog_triggered = (in.watchdog_timer_ms != 0u) &&
                              (in.now_ms - in.watchdog_timer_ms > dep_policy::WATCHDOG_TIMEOUT_MS);
 
+    const bool invert_motor_direction = (in.config_set0 & steer_cfg_set0::MOTOR_DRIVE_DIRECTION) != 0u;
+    const float cfg_min_speed_kmh = static_cast<float>(in.config_min_speed) * 0.1f;
+    const float effective_min_speed_kmh =
+        (cfg_min_speed_kmh > MIN_STEER_SPEED_KMH) ? cfg_min_speed_kmh : MIN_STEER_SPEED_KMH;
+
     if (!in.safety_ok || !in.auto_steer_enabled ||
-        out.watchdog_triggered || in.gps_speed_kmh < MIN_STEER_SPEED_KMH) {
+        out.watchdog_triggered || in.gps_speed_kmh < effective_min_speed_kmh) {
         out.actuator_cmd = 0;
         out.reset_pid = true;
     } else {
         float error = in.setpoint_deg - in.current_angle_deg;
         while (error > 180.0f)  error -= 360.0f;
         while (error < -180.0f) error += 360.0f;
+        if (invert_motor_direction) {
+            error = -error;
+        }
 
         uint32_t dt = in.now_ms - s_steer_pid.last_update_ms;
         if (dt > 100) dt = 5;  // prevent huge dt after pause
