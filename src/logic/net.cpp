@@ -216,6 +216,8 @@ static void netPollRtcmReceiveAndForward(void) {
             break;
         }
     }
+}
+
 void netUpdateUm980Status(uint8_t um980_fix_type,
                           bool rtcm_active,
                           uint32_t differential_age_ms) {
