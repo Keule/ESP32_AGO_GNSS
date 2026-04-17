@@ -1302,22 +1302,48 @@ void hal_net_init(void) {
     // Register Ethernet event handler
     WiFi.onEvent(onEthEvent);
 
+    bool init_ok = false;
+
+#if CONFIG_IDF_TARGET_ESP32
+    // ESP32 target: follow LilyGO pattern and prefer the macro-driven ETH.begin()
+    // variant (RMII/W5500 depending on board-level ETH_* defines).
+    #if defined(ETH_PHY_TYPE) && defined(ETH_PHY_ADDR) && defined(ETH_PHY_MDC) && defined(ETH_PHY_MDIO) && defined(ETH_PHY_POWER) && defined(ETH_CLK_MODE)
+        hal_log("ETH: initialising ESP32 ETH via macro profile (PHY=%d ADDR=%d MDC=%d MDIO=%d PWR=%d CLK_MODE=%d)",
+                ETH_PHY_TYPE, ETH_PHY_ADDR, ETH_PHY_MDC, ETH_PHY_MDIO, ETH_PHY_POWER, ETH_CLK_MODE);
+        init_ok = ETH.begin((eth_phy_type_t)ETH_PHY_TYPE, ETH_PHY_ADDR, ETH_PHY_MDC, ETH_PHY_MDIO, ETH_PHY_POWER, ETH_CLK_MODE);
+    #else
+        // Fallback for ESP32 boards wired with W5500 via SPI (same call signature as S3).
+        hal_log("ETH: initialising ESP32 W5500 via SPI fallback (SCK=%d MISO=%d MOSI=%d CS=%d INT=%d RST=%d)",
+                ETH_SCK, ETH_MISO, ETH_MOSI, ETH_CS, ETH_INT, ETH_RST);
+        init_ok = ETH.begin(
+            ETH_PHY_W5500,
+            1,
+            ETH_CS,
+            ETH_INT,
+            ETH_RST,
+            SPI3_HOST,
+            ETH_SCK,
+            ETH_MISO,
+            ETH_MOSI
+        );
+    #endif
+#else
+    // ESP32-S3 target: onboard W5500 over SPI3_HOST.
     hal_log("ETH: initialising W5500 on SPI3_HOST (SCK=%d MISO=%d MOSI=%d CS=%d INT=%d RST=%d)...",
             ETH_SCK, ETH_MISO, ETH_MOSI, ETH_CS, ETH_INT, ETH_RST);
 
-    // Initialise W5500 via ESP-IDF ETH driver
-    // Parameters: phy_type, phy_addr, cs, irq, rst, spi_host, sck, miso, mosi
-    bool init_ok = ETH.begin(
-        ETH_PHY_W5500,   // PHY type
-        1,                // PHY address (must be 1 for this board)
-        ETH_CS,           // Chip Select    = GPIO 9
-        ETH_INT,          // Interrupt      = GPIO 13
-        ETH_RST,          // Reset          = GPIO 14
-        SPI3_HOST,        // SPI peripheral
-        ETH_SCK,          // SPI Clock      = GPIO 10
-        ETH_MISO,         // SPI MISO       = GPIO 11
-        ETH_MOSI          // SPI MOSI       = GPIO 12
+    init_ok = ETH.begin(
+        ETH_PHY_W5500,
+        1,
+        ETH_CS,
+        ETH_INT,
+        ETH_RST,
+        SPI3_HOST,
+        ETH_SCK,
+        ETH_MISO,
+        ETH_MOSI
     );
+#endif
 
     if (!init_ok) {
         hal_log("ETH: FAILED - W5500 not detected! Check SPI connections.");
