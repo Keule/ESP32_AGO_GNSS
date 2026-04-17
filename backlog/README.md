@@ -26,6 +26,11 @@ Jede Datei in `backlog/tasks/` muss folgende Felder enthalten:
   - `firmware_only`: Reine Firmware-/Code-Änderung.
   - `mixed`: Kombination aus Firmware und Hardwarevalidierung.
 
+## Rollen-Regel
+
+- Tasks werden **ausschließlich** vom KI-Planer angelegt. KI-Entwickler dürfen keine neuen Task-Dateien erstellen und den `backlog/index.yaml` nicht erweitern.
+- Initial trägt sich der KI-Planer als `Owner` ein; KI-Entwickler werden im Feld `Owner` erst nach expliziter Zuordnung eingetragen.
+
 ## Konventionen
 
 - Eine Task-Datei pro offener Aufgabe.

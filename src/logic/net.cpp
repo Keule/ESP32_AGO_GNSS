@@ -35,6 +35,7 @@
 #include "esp_log.h"
 #include "log_ext.h"
 
+#include <climits>
 #include <cstring>
 
 // ===================================================================
@@ -56,6 +57,14 @@ static const uint32_t SEND_INTERVAL_MS = 100;  // 10 Hz
 static uint32_t s_last_invalid_log_ms = 0;
 static uint32_t s_last_unhandled_log_ms = 0;
 
+// RTCM raw-bytestream buffering + telemetry
+static constexpr size_t RTCM_RING_CAPACITY = 4096;
+static uint8_t s_rtcm_ring[RTCM_RING_CAPACITY];
+static size_t s_rtcm_head = 0;
+static size_t s_rtcm_tail = 0;
+static size_t s_rtcm_size = 0;
+static NetRtcmTelemetry s_rtcm_tm;
+
 static int16_t scaleToInt16(float value, float scale) {
     const float scaled = value * scale;
     if (scaled > 32767.0f) return 32767;
@@ -68,6 +77,44 @@ static uint8_t pidOutputToPwmDisplay(uint16_t pid_output, bool settings_received
         return pid_output > 255u ? 255u : static_cast<uint8_t>(pid_output);
     }
     return static_cast<uint8_t>((static_cast<uint32_t>(pid_output) * 255u) / 65535u);
+}
+
+static uint8_t mapUm980FixQualityToAog(uint8_t um980_fix_type, bool rtcm_active) {
+    // Common GGA/receiver quality mapping:
+    // 0=no fix, 1=GPS, 2=DGPS, 4=RTK fixed, 5=RTK float.
+    uint8_t mapped = 0;
+    switch (um980_fix_type) {
+        case 1: mapped = 1; break;  // GPS
+        case 2: mapped = 2; break;  // DGPS
+        case 4: mapped = 4; break;  // RTK fixed
+        case 5: mapped = 5; break;  // RTK float (if supported by receiver/AgIO path)
+        default: mapped = 0; break; // none / unknown
+    }
+
+    // Fallback without RTCM: never advertise differential/RTK quality.
+    if (!rtcm_active) {
+        if (mapped == 2 || mapped == 4 || mapped == 5) {
+            mapped = 1; // degrade to plain GPS position fix
+        }
+    }
+    return mapped;
+}
+
+static int16_t encodeDifferentialAgeX100Ms(uint32_t differential_age_ms, bool rtcm_active) {
+    // PGN field comment in pgn_types.h: "Differential age × 100 [ms]".
+    // Keep implementation aligned with that comment.
+    if (!rtcm_active) return 0;
+
+    const uint32_t scaled = differential_age_ms * 100u;
+    if (scaled > static_cast<uint32_t>(INT16_MAX)) return INT16_MAX;
+    return static_cast<int16_t>(scaled);
+}
+
+static uint16_t speedKmhToMmPerSec(float speed_kmh) {
+    if (speed_kmh <= 0.0f) return 0;
+    const float mm_per_sec = speed_kmh * (1000000.0f / 3600.0f);
+    if (mm_per_sec >= 65535.0f) return 65535u;
+    return static_cast<uint16_t>(mm_per_sec);
 }
 
 // ===================================================================
@@ -84,6 +131,106 @@ void netInit(void) {
     LOGI("NET", "dest IP = %u.%u.%u.%u",
             g_net_cfg.dest_ip[0], g_net_cfg.dest_ip[1],
             g_net_cfg.dest_ip[2], g_net_cfg.dest_ip[3]);
+}
+
+static size_t rtcmRingWrite(const uint8_t* data, size_t len) {
+    if (len == 0) return 0;
+    const size_t free_space = RTCM_RING_CAPACITY - s_rtcm_size;
+    const size_t to_copy = (len < free_space) ? len : free_space;
+    if (to_copy == 0) return 0;
+
+    const size_t first_chunk = ((s_rtcm_head + to_copy) <= RTCM_RING_CAPACITY)
+        ? to_copy
+        : (RTCM_RING_CAPACITY - s_rtcm_head);
+    memcpy(&s_rtcm_ring[s_rtcm_head], data, first_chunk);
+
+    const size_t second_chunk = to_copy - first_chunk;
+    if (second_chunk > 0) {
+        memcpy(&s_rtcm_ring[0], data + first_chunk, second_chunk);
+    }
+
+    s_rtcm_head = (s_rtcm_head + to_copy) % RTCM_RING_CAPACITY;
+    s_rtcm_size += to_copy;
+    return to_copy;
+}
+
+static size_t rtcmRingPeekLinear(const uint8_t** out_ptr) {
+    if (s_rtcm_size == 0) {
+        *out_ptr = nullptr;
+        return 0;
+    }
+
+    *out_ptr = &s_rtcm_ring[s_rtcm_tail];
+    const size_t linear = RTCM_RING_CAPACITY - s_rtcm_tail;
+    return (s_rtcm_size < linear) ? s_rtcm_size : linear;
+}
+
+static void rtcmRingPop(size_t len) {
+    if (len >= s_rtcm_size) {
+        s_rtcm_head = 0;
+        s_rtcm_tail = 0;
+        s_rtcm_size = 0;
+        return;
+    }
+
+    s_rtcm_tail = (s_rtcm_tail + len) % RTCM_RING_CAPACITY;
+    s_rtcm_size -= len;
+}
+
+static void netPollRtcmReceiveAndForward(void) {
+    uint8_t rtcm_buf[aog_frame::MAX_FRAME];
+
+    while (true) {
+        uint16_t src_port = 0;
+        const int rx_len = hal_net_receive_rtcm(rtcm_buf, sizeof(rtcm_buf), &src_port);
+        if (rx_len <= 0) break;
+
+        s_rtcm_tm.rx_bytes += static_cast<uint32_t>(rx_len);
+        s_rtcm_tm.last_activity_ms = hal_millis();
+
+        const size_t written = rtcmRingWrite(rtcm_buf, static_cast<size_t>(rx_len));
+        if (written < static_cast<size_t>(rx_len)) {
+            s_rtcm_tm.dropped_packets++;
+            s_rtcm_tm.overflow_bytes += static_cast<uint32_t>(static_cast<size_t>(rx_len) - written);
+            LOGW("NET", "RTCM ring overflow: dropped %u bytes from port %u (fill=%u/%u)",
+                 static_cast<unsigned>(static_cast<size_t>(rx_len) - written),
+                 src_port,
+                 static_cast<unsigned>(s_rtcm_size),
+                 static_cast<unsigned>(RTCM_RING_CAPACITY));
+        }
+    }
+
+    while (s_rtcm_size > 0) {
+        const uint8_t* chunk = nullptr;
+        const size_t chunk_len = rtcmRingPeekLinear(&chunk);
+        if (!chunk || chunk_len == 0) break;
+
+        const size_t accepted = hal_gnss_rtcm_write(chunk, chunk_len);
+        if (accepted == 0) break;
+        if (accepted > chunk_len) break;
+
+        rtcmRingPop(accepted);
+        s_rtcm_tm.forwarded_bytes += static_cast<uint32_t>(accepted);
+        if (accepted < chunk_len) {
+            s_rtcm_tm.partial_writes++;
+            break;
+        }
+    }
+}
+
+void netUpdateUm980Status(uint8_t um980_fix_type,
+                          bool rtcm_active,
+                          uint32_t differential_age_ms) {
+    const uint32_t now_ms = hal_millis();
+    const uint8_t fix_quality = mapUm980FixQualityToAog(um980_fix_type, rtcm_active);
+    const int16_t age_x100_ms = encodeDifferentialAgeX100Ms(differential_age_ms, rtcm_active);
+
+    StateLock lock;
+    g_nav.um980_fix_type = um980_fix_type;
+    g_nav.um980_rtcm_active = rtcm_active;
+    g_nav.um980_status_timestamp_ms = now_ms;
+    g_nav.gps_fix_quality = fix_quality;
+    g_nav.gps_diff_age_x100_ms = age_x100_ms;
 }
 
 // ===================================================================
@@ -230,6 +377,8 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
 // Poll for received UDP frames
 // ===================================================================
 void netPollReceive(void) {
+    netPollRtcmReceiveAndForward();
+
     uint8_t rx_buf[aog_frame::MAX_FRAME];
 
     while (true) {
@@ -264,6 +413,11 @@ void netPollReceive(void) {
     }
 }
 
+void netGetRtcmTelemetry(NetRtcmTelemetry* out) {
+    if (!out) return;
+    *out = s_rtcm_tm;
+}
+
 // ===================================================================
 // Send periodic AOG frames
 // ===================================================================
@@ -288,6 +442,9 @@ void netSendAogFrames(void) {
         bool imu_quality_ok = false;
         uint32_t heading_timestamp_ms = 0;
         bool heading_quality_ok = false;
+        float gps_speed_kmh = 0.0f;
+        uint8_t gps_fix_quality = 0;
+        int16_t gps_diff_age_x100_ms = 0;
     } snap;
 
     // Input phase: take one consistent state snapshot.
@@ -305,6 +462,9 @@ void netSendAogFrames(void) {
         snap.imu_quality_ok = g_nav.imu_quality_ok;
         snap.heading_timestamp_ms = g_nav.heading_timestamp_ms;
         snap.heading_quality_ok = g_nav.heading_quality_ok;
+        snap.gps_speed_kmh = g_nav.gps_speed_kmh;
+        snap.gps_fix_quality = g_nav.gps_fix_quality;
+        snap.gps_diff_age_x100_ms = g_nav.gps_diff_age_x100_ms;
     }
 
     // Processing phase: encode payloads from snapshot.
@@ -342,5 +502,20 @@ void netSendAogFrames(void) {
     tx_len = pgnEncodeFromAutosteer2(tx_buf, sizeof(tx_buf), sensor_val);
     if (tx_len > 0) {
         hal_net_send(tx_buf, tx_len, aog_port::STEER);
+    }
+
+    AogGpsMainOut gps = {};
+    gps.heading = heading_valid ? scaleToInt16(snap.heading_deg, 16.0f) : 0;
+    gps.dualHeading = gps.heading;
+    gps.speed = speedKmhToMmPerSec(snap.gps_speed_kmh);
+    gps.roll = imu_valid ? scaleToInt16(snap.roll_deg, 16.0f) : 0;
+    gps.fixQuality = snap.gps_fix_quality;
+    gps.age = snap.gps_diff_age_x100_ms;
+    gps.imuHeading = gps.heading;
+    gps.imuRoll = gps.roll;
+
+    tx_len = pgnEncodeGpsMainOut(tx_buf, sizeof(tx_buf), gps);
+    if (tx_len > 0) {
+        hal_net_send(tx_buf, tx_len, aog_port::GPS);
     }
 }

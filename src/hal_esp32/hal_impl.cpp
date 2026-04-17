@@ -34,6 +34,7 @@
 
 #define LOG_LOCAL_LEVEL LOG_LEVEL_HAL
 #include "esp_log.h"
+#include "logic/log_ext.h"
 
 // ===================================================================
 // Arduino / ESP32 includes
@@ -69,6 +70,7 @@
 // one for sending (from port 5126 to AgIO port 9999).
 static WiFiUDP ethUDP_recv;  // Listen socket – bound to port 8888 (receives from AgIO)
 static WiFiUDP ethUDP_send;  // Send socket – sends FROM port 5126 TO AgIO port 9999
+static WiFiUDP ethUDP_rtcm;  // Listen socket – bound to RTCM port (raw correction bytes)
 
 // Static IP configuration
 static IPAddress s_local_ip(192, 168, 1, 70);
@@ -332,6 +334,125 @@ static SemaphoreHandle_t s_mutex = nullptr;
 // if two tasks call Serial.printf() simultaneously on different cores.
 // ===================================================================
 static SemaphoreHandle_t s_log_mutex = nullptr;
+
+// ===================================================================
+// GNSS RTCM UART (UM980 corrections, 8N1)
+// ===================================================================
+static HardwareSerial* s_gnss_rtcm_uart = &Serial1;
+static uint8_t s_gnss_rtcm_uart_num = 1;
+static SemaphoreHandle_t s_gnss_rtcm_mutex = nullptr;
+static bool s_gnss_rtcm_ready = false;
+static uint32_t s_gnss_rtcm_drop_bytes = 0;
+
+static HardwareSerial* gnssUartForNum(uint8_t uart_num) {
+    switch (uart_num) {
+    case 1: return &Serial1;
+    case 2: return &Serial2;
+    default: return nullptr;
+    }
+}
+
+void hal_esp32_gnss_rtcm_set_uart(uint8_t uart_num) {
+    HardwareSerial* uart = gnssUartForNum(uart_num);
+    if (!uart) {
+        LOGW("HAL", "GNSS RTCM UART%u unsupported (valid: 1 or 2), keeping UART%u",
+             static_cast<unsigned>(uart_num),
+             static_cast<unsigned>(s_gnss_rtcm_uart_num));
+        return;
+    }
+    if (s_gnss_rtcm_ready) {
+        LOGW("HAL", "GNSS RTCM UART already active on UART%u, switch ignored",
+             static_cast<unsigned>(s_gnss_rtcm_uart_num));
+        return;
+    }
+    s_gnss_rtcm_uart_num = uart_num;
+    s_gnss_rtcm_uart = uart;
+    LOGI("HAL", "GNSS RTCM mapped to UART%u", static_cast<unsigned>(s_gnss_rtcm_uart_num));
+}
+
+bool hal_gnss_rtcm_begin(uint32_t baud, int8_t rx_pin, int8_t tx_pin) {
+    if (!s_gnss_rtcm_uart) {
+        LOGE("HAL", "GNSS RTCM begin failed: UART mapping is null");
+        return false;
+    }
+    if (baud == 0) {
+        LOGE("HAL", "GNSS RTCM begin failed: baud must be > 0");
+        return false;
+    }
+    if (tx_pin < 0) {
+        LOGE("HAL", "GNSS RTCM begin failed: TX pin must be >= 0");
+        return false;
+    }
+
+    if (!s_gnss_rtcm_mutex) {
+        s_gnss_rtcm_mutex = xSemaphoreCreateMutex();
+    }
+    if (s_gnss_rtcm_mutex) {
+        xSemaphoreTake(s_gnss_rtcm_mutex, portMAX_DELAY);
+    }
+
+    const int uart_rx = (rx_pin < 0) ? -1 : static_cast<int>(rx_pin);
+    const int uart_tx = static_cast<int>(tx_pin);
+
+    s_gnss_rtcm_uart->begin(baud, SERIAL_8N1, uart_rx, uart_tx);
+    s_gnss_rtcm_ready = true;
+    if (s_gnss_rtcm_mutex) {
+        xSemaphoreGive(s_gnss_rtcm_mutex);
+    }
+
+    LOGI("HAL", "GNSS RTCM UART%u ready (baud=%lu, mode=8N1, rx=%d, tx=%d)",
+         static_cast<unsigned>(s_gnss_rtcm_uart_num),
+         static_cast<unsigned long>(baud),
+         uart_rx,
+         uart_tx);
+    return true;
+}
+
+size_t hal_gnss_rtcm_write(const uint8_t* data, size_t len) {
+    if (!data || len == 0) return 0;
+    if (!s_gnss_rtcm_mutex) {
+        s_gnss_rtcm_mutex = xSemaphoreCreateMutex();
+    }
+    if (s_gnss_rtcm_mutex) {
+        xSemaphoreTake(s_gnss_rtcm_mutex, portMAX_DELAY);
+    }
+    if (!s_gnss_rtcm_ready || !s_gnss_rtcm_uart) {
+        LOGW("HAL", "GNSS RTCM write dropped (%u bytes): UART not initialised",
+             static_cast<unsigned>(len));
+        s_gnss_rtcm_drop_bytes += static_cast<uint32_t>(len);
+        if (s_gnss_rtcm_mutex) {
+            xSemaphoreGive(s_gnss_rtcm_mutex);
+        }
+        return 0;
+    }
+
+    const size_t written = s_gnss_rtcm_uart->write(data, len);
+    if (s_gnss_rtcm_mutex) {
+        xSemaphoreGive(s_gnss_rtcm_mutex);
+    }
+
+    if (written < len) {
+        const size_t dropped = len - written;
+        s_gnss_rtcm_drop_bytes += static_cast<uint32_t>(dropped);
+        LOGW("HAL", "GNSS RTCM short write: %u/%u bytes", static_cast<unsigned>(written), static_cast<unsigned>(len));
+    }
+
+    return written;
+}
+
+bool hal_gnss_rtcm_is_ready(void) {
+    return s_gnss_rtcm_ready;
+}
+
+uint32_t hal_gnss_rtcm_drop_count(void) {
+    if (!s_gnss_rtcm_mutex) {
+        return s_gnss_rtcm_drop_bytes;
+    }
+    xSemaphoreTake(s_gnss_rtcm_mutex, portMAX_DELAY);
+    const uint32_t dropped = s_gnss_rtcm_drop_bytes;
+    xSemaphoreGive(s_gnss_rtcm_mutex);
+    return dropped;
+}
 
 // ===================================================================
 // Timing
@@ -1118,6 +1239,11 @@ static void onEthEvent(WiFiEvent_t event) {
         ethUDP_recv.begin(aog_port::AGIO_LISTEN);
         hal_log("ETH: UDP listening on port %u (AgIO sends here)", aog_port::AGIO_LISTEN);
 
+        // Start dedicated RTCM UDP listener (raw bytestream, no AOG framing).
+        ethUDP_rtcm.begin(aog_port::RTCM_LISTEN);
+        hal_log("ETH: UDP listening on RTCM port %u (AgIO/NTRIP correction input)",
+                aog_port::RTCM_LISTEN);
+
         // Start send UDP socket from port 5126 (our source port)
         // Reference: portMy = 5126
         ethUDP_send.begin(aog_port::STEER);
@@ -1130,6 +1256,7 @@ static void onEthEvent(WiFiEvent_t event) {
         s_eth_has_ip = false;
         ethUDP_recv.stop();
         ethUDP_send.stop();
+        ethUDP_rtcm.stop();
         break;
 
     case ARDUINO_EVENT_ETH_STOP:
@@ -1138,6 +1265,7 @@ static void onEthEvent(WiFiEvent_t event) {
         s_eth_has_ip = false;
         ethUDP_recv.stop();
         ethUDP_send.stop();
+        ethUDP_rtcm.stop();
         break;
 
     default:
@@ -1225,6 +1353,23 @@ int hal_net_receive(uint8_t* buf, size_t max_len, uint16_t* out_port) {
     int read = ethUDP_recv.read(buf, packet_size);
     if (out_port) {
         *out_port = static_cast<uint16_t>(ethUDP_recv.remotePort());
+    }
+    return read;
+}
+
+int hal_net_receive_rtcm(uint8_t* buf, size_t max_len, uint16_t* out_port) {
+    if (!s_eth_has_ip) return 0;
+
+    int packet_size = ethUDP_rtcm.parsePacket();
+    if (packet_size <= 0) return 0;
+
+    if (static_cast<size_t>(packet_size) > max_len) {
+        packet_size = static_cast<int>(max_len);
+    }
+
+    int read = ethUDP_rtcm.read(buf, packet_size);
+    if (out_port) {
+        *out_port = static_cast<uint16_t>(ethUDP_rtcm.remotePort());
     }
     return read;
 }

@@ -195,6 +195,28 @@ void hal_actuator_write(uint16_t cmd);
 /// Detect if actuator hardware is present (call after hal_actuator_begin).
 bool hal_actuator_detect(void);
 
+
+// ===================================================================
+// GNSS RTCM (UART)
+// ===================================================================
+
+/// Initialise GNSS RTCM UART output (UM980: 8N1).
+/// @param baud    UART baud rate (e.g. 115200).
+/// @param rx_pin  UART RX GPIO, or -1 to keep unbound.
+/// @param tx_pin  UART TX GPIO.
+/// @return true on success.
+bool hal_gnss_rtcm_begin(uint32_t baud, int8_t rx_pin, int8_t tx_pin);
+
+/// Write RTCM bytes to the GNSS UART stream.
+/// @return number of bytes accepted by UART driver.
+size_t hal_gnss_rtcm_write(const uint8_t* data, size_t len);
+
+/// True after successful hal_gnss_rtcm_begin().
+bool hal_gnss_rtcm_is_ready(void);
+
+/// Total number of bytes dropped due to partial/failed UART writes.
+uint32_t hal_gnss_rtcm_drop_count(void);
+
 // ===================================================================
 // Network (W5500 Ethernet)
 // ===================================================================
@@ -218,6 +240,18 @@ void hal_net_send(const uint8_t* data, size_t len, uint16_t port);
 /// @param out_port receives the source UDP port (host byte order)
 /// @return number of bytes received, or 0 if nothing available
 int hal_net_receive(uint8_t* buf, size_t max_len, uint16_t* out_port);
+
+/// Poll for a received RTCM UDP datagram from the dedicated RTCM socket.
+/// @param buf      buffer to receive into
+/// @param max_len  buffer size
+/// @param out_port receives the source UDP port (host byte order)
+/// @return number of bytes received, or 0 if nothing available
+int hal_net_receive_rtcm(uint8_t* buf, size_t max_len, uint16_t* out_port);
+
+/// Forward RTCM correction bytes to the GNSS receiver transport.
+/// Implementations may accept partial writes for non-blocking behavior.
+/// @return number of bytes accepted for forwarding
+size_t hal_gnss_rtcm_write(const uint8_t* data, size_t len);
 
 /// Check if Ethernet link is up.
 bool hal_net_is_connected(void);
