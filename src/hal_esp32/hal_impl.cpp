@@ -29,6 +29,7 @@
 #include "hal_impl.h"
 #include "hal/hal.h"
 #include "hardware_pins.h"
+#include "logic/features.h"
 #include "logic/pgn_types.h"
 #include "logic/log_config.h"
 
@@ -1431,8 +1432,12 @@ static void hal_esp32_common_boot_init(void) {
     // Safety pin
     pinMode(SAFETY_IN, INPUT_PULLUP);
 
-    // SPI sensor bus (FSPI / SPI2_HOST) - SCK=16, MISO=15, MOSI=17
+    // SPI sensor bus (FSPI / SPI2_HOST) - nur wenn Compile-Time-Capability aktiv.
+#if FEAT_CAP_SENSOR_SPI2
     hal_sensor_spi_init();
+#else
+    hal_log("ESP32: sensor SPI capability disabled at compile time (FEAT_CAP_SENSOR_SPI2=0)");
+#endif
 }
 
 void hal_esp32_init_imu_bringup(void) {
