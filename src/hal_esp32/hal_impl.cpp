@@ -1302,31 +1302,57 @@ void hal_net_init(void) {
     // Register Ethernet event handler
     WiFi.onEvent(onEthEvent);
 
+    bool init_ok = false;
+
+#if CONFIG_IDF_TARGET_ESP32
+    // ESP32 target: follow LilyGO pattern and prefer the macro-driven ETH.begin()
+    // variant (RMII/W5500 depending on board-level ETH_* defines).
+    #if defined(LILYGO_T_ETH_LITE_ESP32)
+        hal_log("ETH: initialising ESP32 ETH via macro profile (PHY=%d ADDR=%d MDC=%d MDIO=%d PWR=%d CLK_MODE=%d)",
+                ETH_TYPE, ETH_ADDR, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_POWER_PIN, ETH_CLK_MODE);
+        init_ok = ETH.begin((eth_phy_type_t)ETH_TYPE, ETH_ADDR, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_POWER_PIN, ETH_CLK_MODE);
+    #else
+        // Fallback for ESP32 boards wired with W5500 via SPI (same call signature as S3).
+        hal_log("ETH: initialising ESP32 W5500 via SPI fallback (SCK=%d MISO=%d MOSI=%d CS=%d INT=%d RST=%d)",
+                ETH_SCK, ETH_MISO, ETH_MOSI, ETH_CS, ETH_INT, ETH_RST);
+        init_ok = ETH.begin(
+            ETH_PHY_W5500,
+            1,
+            ETH_CS,
+            ETH_INT,
+            ETH_RST,
+            SPI3_HOST,
+            ETH_SCK,
+            ETH_MISO,
+            ETH_MOSI
+        );
+    #endif
+#else
+    // ESP32-S3 target: onboard W5500 over SPI3_HOST.
     hal_log("ETH: initialising W5500 on SPI3_HOST (SCK=%d MISO=%d MOSI=%d CS=%d INT=%d RST=%d)...",
             ETH_SCK, ETH_MISO, ETH_MOSI, ETH_CS, ETH_INT, ETH_RST);
 
-    // Initialise W5500 via ESP-IDF ETH driver
-    // Parameters: phy_type, phy_addr, cs, irq, rst, spi_host, sck, miso, mosi
-    bool init_ok = ETH.begin(
-        ETH_PHY_W5500,   // PHY type
-        1,                // PHY address (must be 1 for this board)
-        ETH_CS,           // Chip Select    = GPIO 9
-        ETH_INT,          // Interrupt      = GPIO 13
-        ETH_RST,          // Reset          = GPIO 14
-        SPI3_HOST,        // SPI peripheral
-        ETH_SCK,          // SPI Clock      = GPIO 10
-        ETH_MISO,         // SPI MISO       = GPIO 11
-        ETH_MOSI          // SPI MOSI       = GPIO 12
+    init_ok = ETH.begin(
+        ETH_PHY_W5500,
+        1,
+        ETH_CS,
+        ETH_INT,
+        ETH_RST,
+        SPI3_HOST,
+        ETH_SCK,
+        ETH_MISO,
+        ETH_MOSI
     );
+#endif
 
     if (!init_ok) {
-        hal_log("ETH: FAILED - W5500 not detected! Check SPI connections.");
+        hal_log("ETH: FAILED - Check Configuration.");
         s_w5500_detected = false;
         return;
     }
 
     s_w5500_detected = true;
-    hal_log("ETH: W5500 chip detected OK");
+    hal_log("ETH: chip detected OK");
 
     // Configure static IP address
     if (!ETH.config(s_local_ip, s_gateway, s_subnet, s_dns, s_dns)) {
@@ -1423,16 +1449,19 @@ static void hal_esp32_common_boot_init(void) {
     // goes to USB CDC — user would only see half the output.
     Serial.setDebugOutput(true);
 
-    hal_log("ESP32-S3 AgSteer starting...");
+    hal_log("ESP32 AgSteer starting...");
 
     // Mutex
     hal_mutex_init();
 
+    hal_log("ESP32 seting safety pin input...");
+
     // Safety pin
     pinMode(SAFETY_IN, INPUT_PULLUP);
-
+    hal_log("ESP32 start spi"); 
     // SPI sensor bus (FSPI / SPI2_HOST) - SCK=16, MISO=15, MOSI=17
-    hal_sensor_spi_init();
+    //hal_sensor_spi_init();
+    hal_log("ESP32 init done"); 
 }
 
 void hal_esp32_init_imu_bringup(void) {
@@ -1464,13 +1493,13 @@ void hal_esp32_init_gnss_buildup(void) {
 #if defined(GNSS_BUILDUP_RTCM_RX_PIN)
     constexpr int8_t k_rtcm_rx_pin = static_cast<int8_t>(GNSS_BUILDUP_RTCM_RX_PIN);
 #else
-    constexpr int8_t k_rtcm_rx_pin = 45;
+    constexpr int8_t k_rtcm_rx_pin = GNSS_UART1_RX;
 #endif
 
 #if defined(GNSS_BUILDUP_RTCM_TX_PIN)
     constexpr int8_t k_rtcm_tx_pin = static_cast<int8_t>(GNSS_BUILDUP_RTCM_TX_PIN);
 #else
-    constexpr int8_t k_rtcm_tx_pin = 48;
+    constexpr int8_t k_rtcm_tx_pin = GNSS_UART1_TX;
 #endif
 
     // Communication path required for RTCM ingress (ETH UDP).
