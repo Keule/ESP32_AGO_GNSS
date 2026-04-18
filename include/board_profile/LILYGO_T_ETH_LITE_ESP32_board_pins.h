@@ -108,4 +108,33 @@ inline constexpr int8_t GNSS_MIRROR_UART2_TX_PIN = GNSS_UART2_TX;
 #define LOG_SWITCH_PIN   05
 
 
+// ---------------------------------------------------------------------------
+// Optional SPI aliases used by the shared HAL code path.
+//
+// The classic ESP32 profile uses RMII Ethernet (ETH.begin with MDC/MDIO),
+// therefore dedicated W5500 SPI pins are not used on this target.
+// Keep them at -1 so pin-claim checks skip them gracefully.
+// ---------------------------------------------------------------------------
+#define ETH_SCK        -1
+#define ETH_MISO       -1
+#define ETH_MOSI       -1
+#define ETH_CS         -1
+#define ETH_INT        -1
+#define ETH_RST        -1
+
+// Sensor SPI bus aliases for shared HAL (legacy ESP32 wiring)
+#define SENS_SPI_SCK   SD_SPI_SCK
+#define SENS_SPI_MISO  SD_SPI_MISO
+#define SENS_SPI_MOSI  SD_SPI_MOSI
+
+// Optional sensor/actuator control pins for feature-complete shared builds.
+// Set to -1 on this board profile if a line is not populated.
+#define IMU_INT        -1
+#define IMU_RST        -1
+#define IMU_WAKE       -1
+#define CS_IMU         -1
+#define CS_STEER_ANG   -1
+#define CS_ACT         -1
+
+
 
