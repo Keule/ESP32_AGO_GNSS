@@ -392,6 +392,11 @@ bool hal_gnss_rtcm_begin(uint32_t baud, int8_t rx_pin, int8_t tx_pin) {
         LOGE("HAL", "GNSS RTCM begin failed: baud must be > 0");
         return false;
     }
+    if (tx_pin < 0) {
+        LOGE("HAL", "GNSS RTCM begin failed: TX pin must be >= 0");
+        return false;
+    }
+
     if (!s_gnss_rtcm_mutex) {
         s_gnss_rtcm_mutex = xSemaphoreCreateMutex();
     }
