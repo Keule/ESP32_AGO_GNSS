@@ -2,7 +2,7 @@
 
 - **ID**: TASK-024
 - **Titel**: Pin-Claims und Pin-Zuweisung pro Capability-Initialisierungspfad verbindlich und konfliktarm umsetzen
-- **Status**: open
+- **Status**: done
 - **Priorität**: high
 - **Komponenten**: Hardware-Pin-Definitionen, HAL-Init-Pfade, Capability-Routing, Konfliktprüfung
 - **Dependencies**: TASK-023

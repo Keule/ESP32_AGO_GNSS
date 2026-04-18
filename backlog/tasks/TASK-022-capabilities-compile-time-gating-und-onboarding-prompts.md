@@ -2,7 +2,7 @@
 
 - **ID**: TASK-022
 - **Titel**: Compile-Time-Gating für zusätzliche SPI/UART-Capabilities umsetzen und Pflicht-Onboarding Teil 1 in klickbare Codex-Task-Prompts integrieren
-- **Status**: open
+- **Status**: done
 - **Priorität**: high
 - **Komponenten**: Build-/Feature-Gating, Task-Übergabe-Prompts (klickbare Codex-Buttons), Capability-Header
 - **Dependencies**: TASK-021

@@ -2,7 +2,7 @@
 
 - **ID**: TASK-023
 - **Titel**: Zusätzliche SPI/UART-Capabilities nur bei Modulbedarf initialisieren und Onboarding-Compliance im Codex-Task-Promptpfad verifizieren
-- **Status**: open
+- **Status**: done
 - **Priorität**: high
 - **Komponenten**: Boot-Init-Pfad, HAL-Initialisierung, Capability-Registry/Feature-Abfrage, Prompt-Pipeline-Compliance
 - **Dependencies**: TASK-022
