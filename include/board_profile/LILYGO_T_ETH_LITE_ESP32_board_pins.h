@@ -1,8 +1,6 @@
 #pragma once
-
+#include <cstdint>
 // PIN-Profil fuer LilyGO T-ETH-Lite-ESP32
-
-
 #define BOARD_PROFILE_NAME "lilygo_t_eth_lite_esp32"
 
 #define PIN_GND 100
@@ -70,34 +68,11 @@
 #define SPI_TOUCH_FREQUENCY  2500000
 
 // ---------------------------------------------------------------------------
-// SPI Bus 2: Sensor Bus (FSPI = SPI2_HOST)
-//
-// ADS1118, IMU, and Actuator share this bus with different CS pins.
-// SCK/MISO/MOSI are on GPIO 16/15/17 respectively.
-// ---------------------------------------------------------------------------
-#define SENS_SPI_SCK   0     // SPI clock
-#define SENS_SPI_MISO  35     // SPI MISO (data from devices to ESP32)
-#define SENS_SPI_MOSI  38     // SPI MOSI (data from ESP32 to devices)
-
-// ---------------------------------------------------------------------------
-// Current IMU Wiring (single source of truth)
-// ---------------------------------------------------------------------------
-#define IMU_INT        39    // BNO085 INT pin (input to ESP32-S3)
-#define IMU_RST        38
-#define CS_IMU         13    // BNO085 IMU
-#define IMU_WAKE       14    // BNO085 PS0/WAKE (set HIGH before reset for SPI mode)
-
-// Chip Selects (active LOW) - GPIOs 38-42 are output-only, which is fine for CS/control.
-
-#define CS_STEER_ANG   34    // ADS1118 ADC (steer angle potentiometer)
-#define CS_ACT         05    // Actuator driver
-
-
-
-// ---------------------------------------------------------------------------
 // Safety input (active LOW)
 // ---------------------------------------------------------------------------
 #define SAFETY_IN       15
+
+
 
 // ---------------------------------------------------------------------------
 // GNSS UART bring-up matrix (TASK-019A)
@@ -131,3 +106,6 @@ inline constexpr int8_t GNSS_MIRROR_UART2_TX_PIN = GNSS_UART2_TX;
 //   Switch ON (closed) -> pin pulled LOW  -> logging enabled
 // ---------------------------------------------------------------------------
 #define LOG_SWITCH_PIN   05
+
+
+
