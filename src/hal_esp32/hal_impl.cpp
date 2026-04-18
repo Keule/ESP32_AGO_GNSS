@@ -1424,12 +1424,27 @@ void hal_net_init(void) {
     // Register Ethernet event handler
     WiFi.onEvent(onEthEvent);
 
-    hal_log("ETH: initialising W5500 on SPI3_HOST (SCK=%d MISO=%d MOSI=%d CS=%d INT=%d RST=%d)...",
+    hal_log("ETH: initialising ETH on SPI3_HOST (SCK=%d MISO=%d MOSI=%d CS=%d INT=%d RST=%d)...",
             ETH_SCK, ETH_MISO, ETH_MOSI, ETH_CS, ETH_INT, ETH_RST);
 
-    // Initialise W5500 via ESP-IDF ETH driver
-    // Parameters: phy_type, phy_addr, cs, irq, rst, spi_host, sck, miso, mosi
-    bool init_ok = ETH.begin(
+    // Initialise ESP-IDF ETH driver
+    #if CONFIG_IDF_TARGET_ESP32
+        #define ETH_TYPE                        ETH_PHY_RTL8201
+        #define ETH_ADDR                        0
+        #define ETH_CLK_MODE                    ETH_CLOCK_GPIO0_IN
+        #define ETH_RESET_PIN                   -1
+        #define ETH_MDC_PIN                     23
+        #define ETH_POWER_PIN                   12
+        #define ETH_MDIO_PIN                    18
+        #define SD_MISO_PIN                     34
+        #define SD_MOSI_PIN                     13
+        #define SD_SCLK_PIN                     14
+        #define SD_CS_PIN                       5
+        pinMode(ETH_POWER_PIN, OUTPUT);
+        digitalWrite(ETH_POWER_PIN, HIGH);
+        bool init_ok = ETH.begin(ETH_TYPE, ETH_ADDR, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_RESET_PIN, ETH_CLK_MODE); 
+    #else
+        bool init_ok = ETH.begin(
         ETH_PHY_W5500,   // PHY type
         1,                // PHY address (must be 1 for this board)
         ETH_CS,           // Chip Select    = GPIO 9
@@ -1439,7 +1454,8 @@ void hal_net_init(void) {
         ETH_SCK,          // SPI Clock      = GPIO 10
         ETH_MISO,         // SPI MISO       = GPIO 11
         ETH_MOSI          // SPI MOSI       = GPIO 12
-    );
+         );
+    #endif
 
     if (!init_ok) {
         hal_log("ETH: FAILED - W5500 not detected! Check SPI connections.");
