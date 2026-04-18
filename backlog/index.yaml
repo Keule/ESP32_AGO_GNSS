@@ -456,3 +456,12 @@ tasks:
     task_category: platform_reuse
     dependencies:
       - TASK-023
+  - id: TASK-025
+    title: NTRIP-Client für Single-Base-Caster und konfigurierbare GNSS-Empfänger-Abstraktion implementieren
+    file: backlog/tasks/TASK-025-ntrip-client-und-gnss-receiver-abstraktion.md
+    epic_id: EPIC-004
+    status: open
+    priority: high
+    delivery_mode: firmware_only
+    task_category: feature_expansion
+    dependencies: []
