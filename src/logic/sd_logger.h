@@ -91,6 +91,16 @@ uint32_t sdLoggerGetRecordsFlushed(void);
 /// (not yet flushed to SD).
 uint32_t sdLoggerGetBufferCount(void);
 
+/// Redirect the ring buffer to an externally-allocated buffer (e.g. PSRAM).
+///
+/// After calling this, all ring buffer operations use the provided buffer
+/// instead of the static fallback. The existing indices are clamped to the
+/// new capacity boundary.
+///
+/// @param buf       Pointer to the ring buffer (must be non-null).
+/// @param capacity  Buffer capacity (must be power of 2, non-zero).
+void sdLoggerSetExternalBuffer(SdLogRecord* buf, uint32_t capacity);
+
 // ===================================================================
 // TASK-029: Maintenance Task + PSRAM Ring Buffer
 // ===================================================================

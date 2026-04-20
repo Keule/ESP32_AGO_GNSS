@@ -36,6 +36,7 @@
 
 #include "hal/hal.h"
 #include "fw_config.h"
+#include "logic/features.h"
 #include "logic/sd_logger.h"
 #include "logic/global_state.h"
 

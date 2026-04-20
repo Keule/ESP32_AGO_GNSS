@@ -33,6 +33,12 @@
 #include <cstring>
 
 // ===================================================================
+// Forward declarations (static functions defined below modulesInit)
+// ===================================================================
+static void featureModulesInitCompiled(void);
+static void featureModulesSyncHwDetected(void);
+
+// ===================================================================
 // Internal state
 // ===================================================================
 
