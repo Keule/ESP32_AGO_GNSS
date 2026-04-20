@@ -477,6 +477,31 @@ void setup() {
     gnssMirrorInit();
     if (s_gnss_buildup_active) {
         // Reduced startup: no OTA, no module detection, no sensor/actuator stack.
+
+#if FEAT_ENABLED(FEAT_NTRIP)
+        // -----------------------------------------------------------------
+        // NTRIP Client initialisation — TASK-025
+        // Set your caster credentials here:
+        //   host       : NTRIP caster hostname or IP (e.g. "caster.example.com")
+        //   port       : NTRIP caster port (typically 2101)
+        //   mountpoint : Mountpoint name (e.g. "VRS", "MyMount")
+        //   user       : Username (empty string "" for no auth)
+        //   password   : Password
+        // -----------------------------------------------------------------
+        ntripInit();
+        ntripSetConfig(
+            "caster.example.com",   // <-- TODO: your caster host
+            2101,                   // <-- TODO: your caster port
+            "VRS",                  // <-- TODO: your mountpoint
+            "user",                 // <-- TODO: your username
+            "pass"                  // <-- TODO: your password
+        );
+        hal_log("Main: NTRIP client configured (host=%s, port=%u, mp=%s)",
+                g_ntrip_config.host,
+                static_cast<unsigned>(g_ntrip_config.port),
+                g_ntrip_config.mountpoint);
+#endif
+
         xTaskCreatePinnedToCore(
             commTaskFunc,
             "comm",

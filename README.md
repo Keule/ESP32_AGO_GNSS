@@ -27,7 +27,9 @@ Dieses Repository ist der **kanonische Einstieg** für das Projekt `ZAI_GPS`.
 
 ### Für Agenten
 1. **Zuerst dieses README lesen** (kanonischer Einstieg).
-2. **Protokollgrenze verinnerlichen (verpflichtend):**
+2. **Rolle und Pflichtlektüre:**
+   - [`agents.md`](agents.md) — KI-Rollen, Verantwortlichkeiten und was zu lesen ist.
+3. **Protokollgrenze verinnerlichen (verpflichtend):**
    - **Core-AOG-PGNs**: CRC/Checksum **strikt validieren**.
    - **Discovery/Management-PGNs**: definierte **CRC-Ausnahme** (toleranter Pfad).
    - Referenzen:
