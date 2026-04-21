@@ -251,14 +251,15 @@ static void spiRecordTiming(SpiClient client, uint32_t request_us, uint32_t lock
 static bool spiTransfer(SpiClient client, const uint8_t* tx, uint8_t* rx, size_t len) {
     const SpiClientConfig& cfg = spiCfg(client);
     if (len == 0) return true;
+    if (cfg.cs_pin < 0) return false;
 
     const uint32_t request_us = micros();
     spiBeginCritical();
     const uint32_t lock_us = micros();
 
-    digitalWrite(CS_STEER_ANG, HIGH);
-    digitalWrite(CS_IMU, HIGH);
-    digitalWrite(CS_ACT, HIGH);
+    if (CS_STEER_ANG >= 0) digitalWrite(CS_STEER_ANG, HIGH);
+    if (CS_IMU >= 0)       digitalWrite(CS_IMU, HIGH);
+    if (CS_ACT >= 0)       digitalWrite(CS_ACT, HIGH);
 
     sensorSPI.beginTransaction(SPISettings(cfg.freq_hz, MSBFIRST, cfg.mode));
     digitalWrite(cfg.cs_pin, LOW);
@@ -1340,8 +1341,8 @@ static void wait_for_enter_live_adc(void) {
 
 void hal_steer_angle_begin(void) {
     // Ensure all other SPI device CS pins are configured as outputs
-    pinMode(CS_IMU, OUTPUT);  digitalWrite(CS_IMU, HIGH);
-    pinMode(CS_ACT, OUTPUT);  digitalWrite(CS_ACT, HIGH);
+    if (CS_IMU >= 0) { pinMode(CS_IMU, OUTPUT); digitalWrite(CS_IMU, HIGH); }
+    if (CS_ACT >= 0) { pinMode(CS_ACT, OUTPUT); digitalWrite(CS_ACT, HIGH); }
 
     // Wire up libdriver handle with ESP32 interface functions
     DRIVER_ADS1118_LINK_INIT(&s_ads1118_handle, ads1118_handle_t);
@@ -1574,12 +1575,20 @@ bool hal_steer_angle_is_calibrated(void) {
 // Actuator - SPI Bus 2 (SD_SPI_BUS / SPI2_HOST)
 // ===================================================================
 void hal_actuator_begin(void) {
+    if (CS_ACT < 0) {
+        hal_log("ESP32: Actuator init skipped (CS_ACT not mapped on this board)");
+        return;
+    }
     pinMode(CS_ACT, OUTPUT);
     digitalWrite(CS_ACT, HIGH);
     hal_log("ESP32: Actuator begun on CS=%d (stub)", CS_ACT);
 }
 
 bool hal_actuator_detect(void) {
+    if (CS_ACT < 0) {
+        hal_log("ESP32: Actuator detect skipped (CS_ACT not mapped on this board)");
+        return false;
+    }
     // Actuator is write-only, hard to verify by reading back.
     // Just verify the SPI bus works by attempting a transfer.
     uint8_t tx = 0x00;
@@ -1592,6 +1601,7 @@ bool hal_actuator_detect(void) {
 }
 
 void hal_actuator_write(uint16_t cmd) {
+    if (CS_ACT < 0) return;
     uint8_t tx[2] = {
         static_cast<uint8_t>((cmd >> 8) & 0xFF),
         static_cast<uint8_t>(cmd & 0xFF)
