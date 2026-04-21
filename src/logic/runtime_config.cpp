@@ -1,15 +1,33 @@
 /**
  * @file runtime_config.cpp
- * @brief RuntimeConfig implementation — TASK-028.
+ * @brief RuntimeConfig implementation — TASK-028, TASK-033.
  *
  * Provides the global RuntimeConfig instance and functions to
  * load compile-time defaults and runtime overrides.
+ *
+ * TASK-033: softConfigLoadOverrides() reads NTRIP credentials from
+ * /ntrip.cfg on the SD card.  File format is simple key=value INI:
+ *   host=<hostname>
+ *   port=<port>
+ *   mountpoint=<mountpoint>
+ *   user=<username>
+ *   password=<password>
  */
 
 #include "runtime_config.h"
 #include "soft_config.h"
 
 #include <cstring>
+
+#if defined(ARDUINO_ARCH_ESP32)
+#include <FS.h>
+#include <SD.h>
+#include <SPI.h>
+#include "fw_config.h"   // for SD_SPI_BUS, SD_SPI_SCK, SD_SPI_MISO, SD_SPI_MOSI, SD_CS
+#endif
+
+/// Path to NTRIP credentials file on SD card.
+static constexpr const char* kNtripCfgPath = "/ntrip.cfg";
 
 /// Global runtime configuration instance (zero-initialised).
 static RuntimeConfig s_runtime_config = {};
@@ -35,10 +53,105 @@ void softConfigLoadDefaults(RuntimeConfig& cfg) {
     cfg.log_default_active = cfg::LOG_DEFAULT_ACTIVE;
 }
 
+#if defined(ARDUINO_ARCH_ESP32)
+
+// Parse a "key=value" line.  Returns pointer past '=' or nullptr if not a match.
+static const char* matchKey(const char* line, const char* key) {
+    // Skip leading whitespace
+    while (*line == ' ' || *line == '\t') line++;
+    const char* p = line;
+    while (*key && *p && *p != '=' && *p != '\n' && *p != '\r') {
+        if (*key++ != *p++) return nullptr;
+    }
+    if (*key != '\0') return nullptr;
+    // Skip whitespace before '='
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != '=') return nullptr;
+    return p + 1;  // past '='
+}
+
+// Copy value from line into dst, trimming whitespace and newline.
+static void copyValue(char* dst, size_t dst_size, const char* value) {
+    if (!value || !*value) { dst[0] = '\0'; return; }
+    // Skip whitespace after '='
+    while (*value == ' ' || *value == '\t') value++;
+    size_t i = 0;
+    while (i < dst_size - 1 && *value && *value != '\n' && *value != '\r') {
+        dst[i++] = *value++;
+    }
+    dst[i] = '\0';
+    // Trim trailing whitespace
+    while (i > 0 && (dst[i - 1] == ' ' || dst[i - 1] == '\t')) {
+        dst[--i] = '\0';
+    }
+}
+
+/// Read NTRIP credentials from SD card file.
+/// Returns true if file was found and at least host was read, false otherwise.
+static bool loadNtripFromSd(RuntimeConfig& cfg) {
+    // Initialise SD card SPI
+    SPIClass sdSPI(SD_SPI_BUS);
+    sdSPI.begin(SD_SPI_SCK, SD_SPI_MISO, SD_SPI_MOSI, SD_CS);
+
+    if (!SD.begin(SD_CS, sdSPI, 4000000, "/sd", 5)) {
+        sdSPI.end();
+        return false;
+    }
+
+    File f = SD.open(kNtripCfgPath);
+    if (!f) {
+        SD.end();
+        sdSPI.end();
+        return false;
+    }
+
+    char line[128];
+    bool got_host = false;
+
+    while (f.available()) {
+        int len = f.readBytesUntil('\n', line, sizeof(line) - 1);
+        line[len] = '\0';
+
+        // Skip comments and empty lines
+        const char* p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '#' || *p == '\0' || *p == '\r' || *p == '\n') continue;
+
+        const char* val;
+
+        if ((val = matchKey(line, "host"))) {
+            copyValue(cfg.ntrip_host, sizeof(cfg.ntrip_host), val);
+            got_host = true;
+        } else if ((val = matchKey(line, "port"))) {
+            int port = atoi(val);
+            if (port > 0 && port <= 65535) cfg.ntrip_port = (uint16_t)port;
+        } else if ((val = matchKey(line, "mountpoint"))) {
+            copyValue(cfg.ntrip_mountpoint, sizeof(cfg.ntrip_mountpoint), val);
+        } else if ((val = matchKey(line, "user"))) {
+            copyValue(cfg.ntrip_user, sizeof(cfg.ntrip_user), val);
+        } else if ((val = matchKey(line, "password"))) {
+            copyValue(cfg.ntrip_password, sizeof(cfg.ntrip_password), val);
+        }
+    }
+
+    f.close();
+    SD.end();
+    sdSPI.end();
+    return got_host;
+}
+
+#endif  // ARDUINO_ARCH_ESP32
+
 bool softConfigLoadOverrides(RuntimeConfig& cfg) {
-    // Stub: future implementation for SD card / Serial / WebUI
+#if defined(ARDUINO_ARCH_ESP32)
+    if (loadNtripFromSd(cfg)) {
+        return true;
+    }
+    // No credentials file or SD not present — NTRIP stays with empty defaults
+    // (host is ""), so NTRIP will remain in IDLE state.  This is expected.
+#endif
     (void)cfg;
-    return false;  // "not yet implemented"
+    return false;
 }
 
 RuntimeConfig& softConfigGet(void) {

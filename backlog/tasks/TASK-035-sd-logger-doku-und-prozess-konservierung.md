@@ -20,19 +20,23 @@ Per agents.md §3: *"Wichtige Chatinhalte müssen in Task, ADR oder Report mater
 ## Akzeptanzkriterien
 
 ### F7:
-1. In `sd_logger_esp32.cpp` ein Kommentar ergänzen im Bereich der SPI-Bus-Strategie (Zeilen 14-27 oder 277-280):
+1. ~~In `sd_logger_esp32.cpp` ein Kommentar ergänzen...~~ **ERLEDIGT** durch KI-Planer (siehe Commit-Nachricht). Kommentar in Zeilen 29-34 der Datei:
    ```cpp
-   // On ESP32 Classic (no sensor pins populated): All sensor pins (IMU, ADS, ACT)
-   // are set to -1 in the board profile. No sensor SPI bus switching is required
-   // for SD access — the SD card uses a separate SPI peripheral (HSPI).
+   // ESP32 Classic (T-ETH-Lite-ESP32):
+   //   No sensor SPI bus switching is required for SD access.  Although the SD
+   //   card and the sensor bus share the same HSPI peripheral, all sensor pins
+   //   (IMU, ADS, ACT) are set to -1 in the Classic board profile — no sensor
+   //   peripherals are initialised, so the SD card has exclusive use of HSPI.
+   //   The SPI re-init dance (deinit/reinit) is effectively a no-op on Classic.
    ```
-2. Der Kommentar ist präzise und irreführt nicht (ESP32 Classic nutzt HSPI, nicht SPI2_HOST)
+2. ~~Der Kommentar ist präzise und irreführt nicht...~~ **ERLEDIGT** — Kommentar korrekt: SD und Sensor teilen sich auf dem Classic denselben HSPI-Bus, aber wegen Pins=-1 gibt es keinen Konflikt.
 
-### Prozess §3:
-3. TASK-031 dokumentiert die Entscheidung für Variante (a) im Abschnitt "Entscheidung Mensch"
-4. TASK-033 dokumentiert die Credentials-Datei-Entscheidung
-5. TASK-034 dokumentiert die GPIO-Verlegungs-Entscheidung
-6. Alle drei Tasks sind im `backlog/index.yaml` eingetragen
+### Prozess §3 (Vollständigkeitsprüfung durch KI-Planer):
+3. TASK-031 dokumentiert die Entscheidung für Variante (a) im Abschnitt "Entscheidung Mensch" — **OK**
+4. TASK-033 dokumentiert die Credentials-Datei-Entscheidung — **OK**
+5. TASK-034 dokumentiert die GPIO-3-Verlegungs-Entscheidung — **OK**
+6. Alle drei Tasks sind im `backlog/index.yaml` eingetragen — **OK**
+7. Review-Reports unter `reports/TASK-026-030-review/` konserviert — **OK** (review.md, review.pdf, gpt-5.3-codex.md)
 
 ## Scope (in)
 
@@ -61,7 +65,7 @@ Per agents.md §3: *"Wichtige Chatinhalte müssen in Task, ADR oder Report mater
 ## Invarianten
 
 - Der Kommentar ändert kein Laufzeitverhalten
-- ESP32 Classic SPI-Bus: HSPI für SD, kein Sharing mit Sensor-SPI (da keine Sensor-Pins vorhanden)
+- ESP32 Classic SPI-Bus: SD_SPI_BUS und SENS_SPI_BUS sind beide HSPI (geteilter Bus). Da alle Sensor-Pins -1 sind, hat SD exklusiven Zugang — kein Umschalten nötig.
 
 ## Known Traps
 
@@ -81,5 +85,6 @@ Per agents.md §3: *"Wichtige Chatinhalte müssen in Task, ADR oder Report mater
 
 ## Owner
 
-- **Assigned:** KI-Entwickler
-- **Status:** todo
+- **Assigned:** KI-Planer
+- **Status:** done
+- **Ausgeführt von:** KI-Planer (2026-04-21)

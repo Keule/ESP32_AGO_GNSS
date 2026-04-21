@@ -26,6 +26,13 @@
  *
  *   The sensor SPI is unavailable for ~50-200 ms per flush cycle.
  *
+ * ESP32 Classic (T-ETH-Lite-ESP32):
+ *   No sensor SPI bus switching is required for SD access.  Although the SD
+ *   card and the sensor bus share the same HSPI peripheral, all sensor pins
+ *   (IMU, ADS, ACT) are set to -1 in the Classic board profile — no sensor
+ *   peripherals are initialised, so the SD card has exclusive use of HSPI.
+ *   The SPI re-init dance (deinit/reinit) is effectively a no-op on Classic.
+ *
  * TASK-029 Architecture:
  *   The maintTask replaces the standalone loggerTask and consolidates
  *   all blocking operations into one low-priority task:

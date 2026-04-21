@@ -129,13 +129,12 @@ inline constexpr int8_t GNSS_MIRROR_UART2_TX_PIN = GNSS_UART2_TX;
 
 // Logging switch (active LOW, internal pull-up)
 //
-// GPIO 46 is an ESP32-S3 strapping pin, but works for this active-LOW input:
-// floating/LOW is safe for serial download mode and normal boot ignores it.
-// Connect a toggle switch between GPIO 46 and GND.
+// GPIO 3 — bidirectional, not used by ETH/SPI/UART/PSRAM.
+// Connect a toggle switch between GPIO 3 and GND.
 //   Switch OFF (open)  -> pin pulled HIGH -> logging disabled
 //   Switch ON (closed) -> pin pulled LOW  -> logging enabled
 // ---------------------------------------------------------------------------
-#define LOG_SWITCH_PIN   46
+#define LOG_SWITCH_PIN   3
 
 // ---------------------------------------------------------------------------
 // Feature Pin Groups — TASK-027
@@ -175,7 +174,7 @@ static constexpr uint8_t FEAT_PINS_NTRIP_COUNT = 0;
 static constexpr int8_t FEAT_PINS_SAFETY[] = { SAFETY_IN, -1 };
 static constexpr uint8_t FEAT_PINS_SAFETY_COUNT = 1;
 
-// Logging switch: GPIO 46 (CONFLICT with IMU_INT!)
+// Logging switch: GPIO 3
 static constexpr int8_t FEAT_PINS_LOGSW[] = { LOG_SWITCH_PIN, -1 };
 static constexpr uint8_t FEAT_PINS_LOGSW_COUNT = 1;
 

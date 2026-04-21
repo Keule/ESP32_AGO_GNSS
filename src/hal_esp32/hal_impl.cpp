@@ -421,34 +421,34 @@ static bool pinClaimsAddBatch(const PinClaimEntry* entries, size_t count, const 
 
 static bool claimCommonInitPins(void) {
     static constexpr PinClaimEntry claims[] = {
-        {SAFETY_IN, "safety-input"},
-        {SENS_SPI_SCK, "sensor-spi-sck"},
-        {SENS_SPI_MISO, "sensor-spi-miso"},
-        {SENS_SPI_MOSI, "sensor-spi-mosi"},
+        {SAFETY_IN, "MOD_SAFETY"},
+        {SENS_SPI_SCK, "HAL_SENSOR_SPI"},
+        {SENS_SPI_MISO, "HAL_SENSOR_SPI"},
+        {SENS_SPI_MOSI, "HAL_SENSOR_SPI"},
     };
     return pinClaimsAddBatch(claims, sizeof(claims) / sizeof(claims[0]), s_pin_claim_path);
 }
 
 static bool claimImuSteerInitPins(void) {
     static constexpr PinClaimEntry claims[] = {
-        {IMU_INT, "imu-int"},
-        {IMU_RST, "imu-rst"},
-        {IMU_WAKE, "imu-wake"},
-        {CS_IMU, "imu-cs"},
-        {CS_STEER_ANG, "steer-angle-cs"},
-        {CS_ACT, "actuator-cs"},
+        {IMU_INT, "MOD_IMU"},
+        {IMU_RST, "MOD_IMU"},
+        {IMU_WAKE, "MOD_IMU"},
+        {CS_IMU, "MOD_IMU"},
+        {CS_STEER_ANG, "MOD_ADS"},
+        {CS_ACT, "MOD_ACT"},
     };
     return pinClaimsAddBatch(claims, sizeof(claims) / sizeof(claims[0]), s_pin_claim_path);
 }
 
 static bool claimEthPins(void) {
     static constexpr PinClaimEntry claims[] = {
-        {ETH_SCK, "eth-sck"},
-        {ETH_MISO, "eth-miso"},
-        {ETH_MOSI, "eth-mosi"},
-        {ETH_CS, "eth-cs"},
-        {ETH_INT, "eth-int"},
-        {ETH_RST, "eth-rst"},
+        {ETH_SCK, "MOD_ETH"},
+        {ETH_MISO, "MOD_ETH"},
+        {ETH_MOSI, "MOD_ETH"},
+        {ETH_CS, "MOD_ETH"},
+        {ETH_INT, "MOD_ETH"},
+        {ETH_RST, "MOD_ETH"},
     };
     return pinClaimsAddBatch(claims, sizeof(claims) / sizeof(claims[0]), s_pin_claim_path);
 }
@@ -466,8 +466,8 @@ static bool claimGnssUartPins(uint8_t uart_num, int rx_pin, int tx_pin) {
     }
 
     const PinClaimEntry claims[] = {
-        {rx_pin, "gnss-rtcm-rx"},
-        {tx_pin, "gnss-rtcm-tx"},
+        {rx_pin, "MOD_GNSS"},
+        {tx_pin, "MOD_GNSS"},
     };
     return pinClaimsAddBatch(claims, sizeof(claims) / sizeof(claims[0]), s_pin_claim_path);
 }

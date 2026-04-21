@@ -585,7 +585,7 @@ tasks:
     title: sd_logger_esp32.cpp Dokumentation und Prozess-Konservierung (Review-F7)
     file: backlog/tasks/TASK-035-sd-logger-doku-und-prozess-konservierung.md
     epic_id: EPIC-003
-    status: open
+    status: done
     priority: low
     delivery_mode: firmware_only
     task_category: platform_reuse

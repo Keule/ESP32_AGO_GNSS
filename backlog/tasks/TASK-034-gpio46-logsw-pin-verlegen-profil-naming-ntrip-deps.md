@@ -57,10 +57,12 @@ Das Profil `[env:profile_full_steer_ntrip_esp32]` trägt `-DFEAT_PROFILE_FULL_ST
 
 ## Verifikation / Test
 
-- `pio run -e T-ETH-Lite-ESP32S3` (profile_full_steer) — muss kompilieren
+- `pio run -e T-ETH-Lite-ESP32S3` — S3-Basis muss kompilieren (GPIO-3 Referenz im Board-Profil)
+- `pio run -e profile_sensor_front` — S3-Modulprofil (MOD_IMU + MOD_LOGSW aktiv, GPIO-Konflikt-Test)
 - `pio run -e profile_ntrip_classic` (umbenannt) — muss kompilieren
-- `pio run -e profile_full_steer_ntrip` (S3) — muss kompilieren (unverändert)
-- `rg "profile_full_steer_ntrip_esp32" platformio.ini` — keine Treffer
+- `pio run -e profile_full_steer_ntrip` — Classic-NTRIP-Profil muss kompilieren (unverändert, extends Classic)
+- `rg "profile_full_steer_ntrip_esp32" platformio.ini` — keine Treffer (alter Name entfernt)
+- `rg "LOG_SWITCH_PIN.*46" include/` — keine Treffer (GPIO-46 Konflikt behoben)
 
 ## Relevante ADRs
 

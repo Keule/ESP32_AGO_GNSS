@@ -488,7 +488,7 @@ void setup() {
 
         // Initialise soft config from compile-time defaults — TASK-028
         softConfigLoadDefaults(softConfigGet());
-        softConfigLoadOverrides(softConfigGet());  // currently a no-op stub
+        softConfigLoadOverrides(softConfigGet());  // TASK-033: reads /ntrip.cfg from SD
 
 #if FEAT_ENABLED(FEAT_NTRIP)
         // -----------------------------------------------------------------
@@ -558,7 +558,7 @@ void setup() {
     // the compile-time defaults defined in include/soft_config.h.
     // -----------------------------------------------------------------
     softConfigLoadDefaults(softConfigGet());
-    softConfigLoadOverrides(softConfigGet());  // currently a no-op stub
+    softConfigLoadOverrides(softConfigGet());  // TASK-033: reads /ntrip.cfg from SD
 
     // Initialise module system – detect hardware for all modules
     modulesInit();

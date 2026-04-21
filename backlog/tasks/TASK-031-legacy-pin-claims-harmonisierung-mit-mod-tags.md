@@ -45,7 +45,10 @@ Die Sensor-SPI-Pins (SCK=47, MISO=21, MOSI=38) werden von IMU, ADS und ACT gemei
 1. `hal_impl.cpp`: Alle Pin-Claims in `claimCommonInitPins()`, `claimImuSteerInitPins()`, `claimEthPins()`, `claimGnssUartPins()` verwenden **MOD_***-Tags als Owner (Ausnahme: Sensor-SPI-Bus-Pins unter `"HAL_SENSOR_SPI"`)
 2. `moduleActivate(MOD_IMU)` in `setup()` succeeds auf ESP32-S3 (kein Konflikt mit HAL-Init-Claims)
 3. `moduleActivate(MOD_ETH)` in `setup()` succeeds auf ESP32-S3
-4. Alle Board-Profile kompilieren fehlerfrei (`profile_full_steer`, `profile_full_steer_ntrip`, `profile_full_steer_ntrip_esp32`, `profile_ntrip_classic` nach TASK-034)
+4. Alle relevanten Build-Profile kompilieren fehlerfrei:
+   - S3: `T-ETH-Lite-ESP32S3` (Basis), `profile_comm_only`, `profile_sensor_front`, `profile_actor_rear`
+   - Classic: `T-ETH-Lite-ESP32` (Basis), `profile_full_steer_ntrip` (nach TASK-034: `profile_ntrip_classic`)
+   - Hinweis: Es existiert kein `profile_full_steer` für den S3 — die Legacy-Tags betreffen alle Profile gleichermaßen über `hal_esp32_init_all()`
 5. Boot-Log zeigt keine `"Pin claim conflict"` Meldungen für Module, die in `setup()` aktiviert werden
 6. ESP32 Classic: Keine Regression (Pins=-1 werden weiterhin korrekt übersprungen)
 
@@ -63,8 +66,11 @@ Die Sensor-SPI-Pins (SCK=47, MISO=21, MOSI=38) werden von IMU, ADS und ACT gemei
 
 ## Verifikation / Test
 
-- `pio run -e T-ETH-Lite-ESP32S3` (profile_full_steer) — muss kompilieren
-- `pio run -e T-ETH-Lite-ESP32` (profile_full_steer_ntrip_esp32) — muss kompilieren
+- `pio run -e T-ETH-Lite-ESP32S3` — Basis-Build muss kompilieren
+- `pio run -e profile_sensor_front` — S3-Modulprofil (IMU + ADS aktiv) muss kompilieren
+- `pio run -e profile_actor_rear` — S3-Modulprofil (ACT aktiv) muss kompilieren
+- `pio run -e T-ETH-Lite-ESP32` — Classic-Basis muss kompilieren
+- `pio run -e profile_full_steer_ntrip` — Classic-NTRIP-Profil muss kompilieren (nach TASK-034: `profile_ntrip_classic`)
 - Boot-Log: Keine `"Pin claim conflict"` Meldungen
 - `rg "Pin claim conflict" src/` — sollte nur noch in Fehlerfall-Codes auftauchen
 

@@ -75,6 +75,13 @@ void hwStatusInit(void) {
 // ===================================================================
 void hwStatusSetFlag(HwSubsystem id, HwSeverity severity) {
     if (id >= HW_COUNT) return;
+    // HW_SEV_OK means "no error" — clear the flag instead of setting it.
+    // This prevents callers from accidentally marking a subsystem as faulty
+    // when they intend to signal that everything is OK (see TASK-032).
+    if (severity == HW_SEV_OK) {
+        hwStatusClearFlag(id);
+        return;
+    }
     if (!s_subsys[id].error) {
         s_subsys[id].error = true;
         s_subsys[id].severity = severity;
