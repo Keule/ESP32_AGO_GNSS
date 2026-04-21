@@ -114,7 +114,7 @@ void modulesInit(void) {
     s_hw.safety_ok = mod_safety_enabled ? hal_safety_ok() : true;
     hal_log("MODULES: Safety Circuit       : %s", s_hw.safety_ok ? "OK" : "KICK");
 
-    // SD card presence (boot-detect pin with fallback probe)
+    // SD card presence (one-shot boot init/mount probe)
     s_hw.sd_present = mod_sd_enabled ? hal_sd_card_present() : false;
     hal_log("MODULES: SD card presence     : %s", s_hw.sd_present ? "PRESENT" : "MISSING");
 

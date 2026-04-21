@@ -45,7 +45,7 @@ struct ModuleHwStatus {
     bool was_detected;       ///< Wheel Angle Sensor (steer angle) detected
     bool actuator_detected;  ///< Actuator detected via SPI
     bool safety_ok;          ///< Safety circuit reads OK
-    bool sd_present;         ///< SD card presence at boot (detect pin / fallback probe)
+    bool sd_present;         ///< SD card presence at boot (one-shot init/mount probe)
 };
 
 // ===================================================================

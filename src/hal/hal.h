@@ -57,7 +57,7 @@ bool hal_safety_ok(void);
 // ===================================================================
 
 /// Read SD card presence at boot.
-/// Uses SD_DETECT_PIN polarity when available; may fallback to a quick SD probe.
+/// Performs a one-shot SD init/mount probe and restores the SPI bus afterwards.
 bool hal_sd_card_present(void);
 
 // ===================================================================

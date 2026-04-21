@@ -990,20 +990,34 @@ bool hal_safety_ok(void) {
 }
 
 bool hal_sd_card_present(void) {
-#if defined(SD_DETECT_PIN) && (SD_DETECT_PIN >= 0)
-    const int raw = digitalRead(SD_DETECT_PIN);
-#if defined(SD_DETECT_ACTIVE_LOW) && (SD_DETECT_ACTIVE_LOW == 0)
-    const bool present = (raw == HIGH);
-#else
-    const bool present = (raw == LOW);
-#endif
-    hal_log("ESP32: SD detect pin GPIO %d raw=%d -> %s",
-            SD_DETECT_PIN, raw, present ? "PRESENT" : "MISSING");
-    return present;
-#else
-    hal_log("ESP32: SD detect pin unavailable (SD_DETECT_PIN < 0) -> assume PRESENT");
-    return true;
-#endif
+    static bool s_probe_done = false;
+    static bool s_probe_present = false;
+    if (s_probe_done) {
+        return s_probe_present;
+    }
+
+    s_probe_done = true;
+
+    // One-shot boot probe:
+    // 1) release sensor SPI ownership, 2) try SD mount once, 3) always release SD SPI,
+    // 4) restore sensor SPI ownership.
+    hal_sensor_spi_deinit();
+    hal_delay_ms(10);
+
+    SPIClass sdSPI(SD_SPI_BUS);
+    sdSPI.begin(SD_SPI_SCK, SD_SPI_MISO, SD_SPI_MOSI, SD_CS);
+
+    s_probe_present = SD.begin(SD_CS, sdSPI, 4000000, "/sd", 5);
+    if (s_probe_present) {
+        hal_log("ESP32: SD boot probe -> PRESENT");
+    } else {
+        hal_log("ESP32: SD boot probe -> MISSING/INIT FAILED");
+    }
+
+    SD.end();
+    sdSPI.end();
+    hal_sensor_spi_reinit();
+    return s_probe_present;
 }
 
 // ===================================================================
@@ -1845,21 +1859,6 @@ static void hal_esp32_common_boot_init(void) {
     pinMode(SAFETY_IN, INPUT_PULLUP);
     hal_log("ESP32 safety pin set.");
 
-#if defined(SD_DETECT_PIN) && (SD_DETECT_PIN >= 0)
-#if defined(SD_DETECT_ACTIVE_LOW) && (SD_DETECT_ACTIVE_LOW == 0)
-    pinMode(SD_DETECT_PIN, INPUT);
-#else
-    pinMode(SD_DETECT_PIN, INPUT_PULLUP);
-#endif
-    hal_log("ESP32: SD detect pin configured (GPIO %d, active_%s)",
-            SD_DETECT_PIN,
-#if defined(SD_DETECT_ACTIVE_LOW) && (SD_DETECT_ACTIVE_LOW == 0)
-            "high"
-#else
-            "low"
-#endif
-    );
-#endif
 }
 
 static void hal_esp32_init_sensor_bus_if_needed(void) {
