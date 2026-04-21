@@ -26,6 +26,16 @@ Dieses Dokument definiert, wie ein Plan-Agent Aufgaben in **unabhängige** und *
 - Identifiziert Dateifootprints und `merge_risk_files`.
 - Erstellt pro Task einen Branch `task/<Task-ID>` vom aktuellen Entwicklungszweig.
 - Darf Planungs-, Prozess- und Backlog-Dateien ändern.
+- Darf keine Code-Dateien ändern.
+
+#### Verhaltensregeln bei Task-Erstellung
+
+1. **Repo-Kontext studieren** — Vor jeder Task-Erstellung muss der KI-Planer die aktuelle Repo-Struktur, Backlog-Konventionen (`backlog/README.md`, `backlog/index.yaml`), bestehende Tasks und `README.md` gelesen haben. Die Task-Nummerierung, Namenskonventionen und Epic-Zuordnung müssen dem aktuellen Stand entsprechen.
+2. **Origin dokumentieren** — Jeder Task muss ein `Origin`-Feld enthalten, das die Nutzer-Fragen und -Anforderungen zusammenfasst, die zu dem Task geführt haben. Dies dient der Nachvollziehbarkeit und dem Kontext-Transfer.
+3. **Diskussions-Links** — Jeder Task muss Links zur zugrundeliegenden Diskussion enthalten:
+   - **Direkt-Link**: Link zur spezifischen Chat-Session (z. B. `https://chat.z.ai/c/<chat-id>`).
+   - **Shared-Link**: Shared-Version der Diskussion (z. B. `https://chat.z.ai/s/<share-id>`).
+   Beide Links stellen sicher, dass der volle Diskussionkontext für KI-Entwickler und Reviewer zugänglich ist.
 
 ### KI-Entwickler
 

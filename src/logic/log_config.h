@@ -41,8 +41,10 @@
 #define LOG_LEVEL_IMU    LOG_LVL_INFO
 #define LOG_LEVEL_ACT    LOG_LVL_INFO
 #define LOG_LEVEL_SDL    LOG_LVL_INFO
+#define LOG_LEVEL_MAINT  LOG_LVL_INFO
 #define LOG_LEVEL_OTA    LOG_LVL_INFO
 #define LOG_LEVEL_HAL    LOG_LVL_DEBUG
+#define LOG_LEVEL_NTRIP  LOG_LVL_DEBUG
 
 // ── Laufzeit-Features (auf 0 setzen spart RAM) ──
 #define LOG_FILTER_ENABLED   1   // "filter net.cpp:47" Kommando
