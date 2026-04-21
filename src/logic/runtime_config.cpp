@@ -99,6 +99,7 @@ static bool loadNtripFromSd(RuntimeConfig& cfg) {
     sdSPI.begin(SD_SPI_SCK, SD_SPI_MISO, SD_SPI_MOSI, SD_CS);
 
     bool result = false;
+    bool got_host = false;
     File f;
 
     if (!SD.begin(SD_CS, sdSPI, 4000000, "/sd", 5)) {
@@ -111,7 +112,6 @@ static bool loadNtripFromSd(RuntimeConfig& cfg) {
     }
 
     char line[128];
-    bool got_host = false;
 
     while (f.available()) {
         int len = f.readBytesUntil('\n', line, sizeof(line) - 1);
