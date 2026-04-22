@@ -61,6 +61,9 @@ epics:
       - TASK-035
       - TASK-036
       - TASK-037
+      - TASK-039
+      - TASK-040
+      - TASK-041
 
   - id: EPIC-004
     title: Feature Expansion
@@ -70,8 +73,6 @@ epics:
       - TASK-008
       - TASK-009
       - TASK-010
-      - TASK-013
-      - TASK-014
       - TASK-014A
       - TASK-015
       - TASK-016
@@ -83,10 +84,12 @@ epics:
       - TASK-019C
       - TASK-019D
       - TASK-019E
-      - TASK-037
+      - TASK-019F
+      - TASK-019G
       - TASK-025
       - TASK-030
       - TASK-037
+      - TASK-038
 
 tasks:
   - id: TASK-001
@@ -217,15 +220,6 @@ tasks:
     dependencies: []
 
   - id: TASK-013
-    title: HAL-/Netzwerk-Schnittstellenänderungen mit expliziten Claims und Merge-Risikosteuerung planen
-    file: backlog/tasks/TASK-013-hal-net-interface-claims-und-parallelisierung.md
-    epic_id: EPIC-003
-    status: open
-    priority: high
-    delivery_mode: firmware_only
-    task_category: platform_reuse
-    dependencies:
-      - TASK-003
     title: RTCM-Weiterleitung AgIO → UM980 validieren und PGN-214-RTK-Verhalten verifizieren
     file: backlog/tasks/TASK-013-rtcm-zu-um980-validierung.md
     epic_id: EPIC-004
@@ -301,7 +295,6 @@ tasks:
     delivery_mode: hardware_required
     task_category: feature_expansion
     dependencies:
-      - TASK-014
       - TASK-014A
       - TASK-015
       - TASK-016
@@ -471,6 +464,7 @@ tasks:
     task_category: platform_reuse
     dependencies:
       - TASK-023
+
   - id: TASK-025
     title: NTRIP-Client für Single-Base-Caster und konfigurierbare GNSS-Empfänger-Abstraktion implementieren
     file: backlog/tasks/TASK-025-ntrip-client-und-gnss-receiver-abstraktion.md
@@ -535,11 +529,6 @@ tasks:
     dependencies:
       - TASK-027
       - TASK-029
-
-  # ---------------------------------------------------------------------------
-  # Review-Nacharbeiten TASK-026..030 (KI-Planer, 2026-04-21)
-  # Ursprung: Kombinierter Review (Super Z + GPT-5.3-Codex)
-  # ---------------------------------------------------------------------------
 
   - id: TASK-031
     title: Legacy HAL Pin-Claims mit MOD_*-Tags harmonisieren (Review-F1)
@@ -620,16 +609,8 @@ tasks:
       - TASK-016
       - TASK-017
       - TASK-019
-     epic_id: EPIC-004
-    status: open
-    priority: high
-    delivery_mode: firmware_only
-    task_category: feature_expansion
-    dependencies:
-      - TASK-028
-      - TASK-030
-    
-   - id: TASK-038 
+
+  - id: TASK-038
     title: Planungs-Task für die Parametrisierung beider UM980-UARTs erstellen
     file: backlog/tasks/TASK-037-planungs-task-parametrisierung-beider-um980-uarts.md
     epic_id: EPIC-004
@@ -644,8 +625,8 @@ tasks:
       - TASK-014
       - TASK-017
       - TASK-019F
-      
-  - id: TASK-039 
+
+  - id: TASK-039
     title: Boot-Pfad analysieren und deterministischen Serial-Konfigmodus bei Safety-Pin LOW spezifizieren
     file: backlog/tasks/TASK-037-boot-safety-pin-serial-konfigmodus.md
     epic_id: EPIC-003
@@ -657,8 +638,8 @@ tasks:
       - TASK-022
       - TASK-023
       - TASK-028
-    
-  - id: TASK-040 
+
+  - id: TASK-040
     title: NTRIP-Konfigurationspfad (Konsole/Runtime/Persistenz) funktional und sicher spezifizieren
     file: backlog/tasks/TASK-037-ntrip-konfiguration-funktional-und-sicher-spezifizieren.md
     epic_id: EPIC-003
@@ -671,8 +652,8 @@ tasks:
       - TASK-030
       - TASK-032
       - TASK-033
-      
- - id: TASK-041 
+
+  - id: TASK-041
     title: Boot-Pfad analysieren und deterministischen Serial-Konfigmodus bei Safety-Pin LOW spezifizieren
     file: backlog/tasks/TASK-037-boot-safety-pin-serial-konfigmodus.md
     epic_id: EPIC-003
