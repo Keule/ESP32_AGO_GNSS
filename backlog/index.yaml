@@ -621,3 +621,16 @@ tasks:
       - TASK-014
       - TASK-017
       - TASK-019F
+      
+  - id: TASK-038  
+    title: Boot-Pfad analysieren und deterministischen Serial-Konfigmodus bei Safety-Pin LOW spezifizieren
+    file: backlog/tasks/TASK-037-boot-safety-pin-serial-konfigmodus.md
+    epic_id: EPIC-003
+    status: open
+    priority: high
+    delivery_mode: mixed
+    task_category: platform_reuse
+    dependencies:
+      - TASK-022
+      - TASK-023
+      - TASK-028
