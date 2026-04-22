@@ -15,6 +15,7 @@
 #include "global_state.h"
 #include "hal/hal.h"
 #include "modules.h"
+#include "diag.h"
 
 #include <Arduino.h>
 #include <esp_system.h>
@@ -489,6 +490,28 @@ void cliCmdActuator(int argc, char** argv) {
     Serial.println("usage: actuator <status|test>");
 }
 
+void cliCmdDiag(int argc, char** argv) {
+    if (argc < 2) {
+        Serial.println("usage: diag <hw|mem|net>");
+        return;
+    }
+
+    if (std::strcmp(argv[1], "hw") == 0) {
+        diagPrintHw();
+        return;
+    }
+    if (std::strcmp(argv[1], "mem") == 0) {
+        diagPrintMem();
+        return;
+    }
+    if (std::strcmp(argv[1], "net") == 0) {
+        diagPrintNet();
+        return;
+    }
+
+    Serial.println("usage: diag <hw|mem|net>");
+}
+
 void cliCmdUnknown(const char* cmd) {
     Serial.printf("Unknown command: %s\n", cmd ? cmd : "");
     Serial.println("Type 'help' for available commands.");
@@ -527,6 +550,7 @@ void cliInit(void) {
     (void)cliRegisterCommand("net", &cliCmdNet, "Network runtime config");
     (void)cliRegisterCommand("module", &cliCmdModule, "Module runtime control");
     (void)cliRegisterCommand("actuator", &cliCmdActuator, "Actuator manual test mode");
+    (void)cliRegisterCommand("diag", &cliCmdDiag, "Diagnostics (hw/mem/net)");
 }
 
 bool cliRegisterCommand(const char* cmd,
