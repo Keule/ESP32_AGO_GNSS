@@ -9,9 +9,10 @@
 #include "control.h"
 #include "dependency_policy.h"
 #include "imu.h"
-#include "steer_angle.h"
+#include "was.h"
 #include "actuator.h"
 #include "global_state.h"
+#include "module_interface.h"
 #include "modules.h"
 #include "hal/hal.h"
 
@@ -37,6 +38,10 @@ constexpr float MIN_STEER_SPEED_KMH = 0.1f;
 /// PID instance for steering
 static PidState s_steer_pid;
 static uint32_t s_last_was_diag_ms = 0;
+
+// Sensor modules for control-loop input phase (keep IMU -> WAS order).
+static const ModuleOps* const s_sensor_modules[] = { &imu_ops, &was_ops };
+static constexpr uint8_t k_sensor_count = sizeof(s_sensor_modules) / sizeof(s_sensor_modules[0]);
 
 // ===================================================================
 // PID Implementation
@@ -198,15 +203,20 @@ void controlStep(void) {
     const bool safety_active = moduleIsActive(MOD_SAFETY);
 
     in.safety_ok = safety_active ? hal_safety_ok() : true;
-    #if FEAT_IMU
-    if (imu_active) {
-        imuUpdate();
+    for (uint8_t i = 0; i < k_sensor_count; i++) {
+        const ModuleOps* mod = s_sensor_modules[i];
+        if (!mod) continue;
+        if (mod->isEnabled && !mod->isEnabled()) continue;
+        if (mod->update) {
+            (void)mod->update();
+        }
     }
-    #endif
-    #if FEAT_STEER_SENSOR
-    in.current_angle_deg = ads_active ? steerAngleReadDeg() : 0.0f;
+
+    if (ads_active) {
+        StateLock lock;
+        in.current_angle_deg = g_nav.steer_angle_deg;
+    }
     in.steer_raw = ads_active ? hal_steer_angle_read_raw() : 0;
-    #endif
     in.setpoint_deg = desiredSteerAngleDeg;
 
 #if LOG_WAS_DIAG_INTERVAL_MS > 0
@@ -263,7 +273,7 @@ void controlStep(void) {
 
     #if FEAT_MACHINE_ACTOR && FEAT_STEER_ACTOR
     if (act_active) {
-        actuatorWriteCommand(out.actuator_cmd);
+        (void)actuatorUpdate(out.actuator_cmd);
     }
     #endif
 

@@ -113,6 +113,11 @@ bool imuBringupModeEnabled(void) {
     return k_imu_bringup_mode;
 }
 
+void imuInit(void) {
+    hal_imu_begin();
+    LOGI("IMU", "initialised (BNO085 SPI)");
+}
+
 bool imuUpdate(void) {
     float yaw_rate = 0.0f;
     float roll = 0.0f;
@@ -144,6 +149,14 @@ bool imuUpdate(void) {
     }
 
     return plausible;
+}
+
+bool imuIsHealthy(uint32_t now_ms) {
+    StateLock lock;
+    if (!g_nav.imu_quality_ok) return false;
+    return dep_policy::isFresh(now_ms,
+                               g_nav.imu_timestamp_ms,
+                               dep_policy::IMU_FRESHNESS_TIMEOUT_MS);
 }
 
 void imuBringupInit(void) {
@@ -273,3 +286,21 @@ void imuBringupTick(void) {
                 s_last_detect_ok ? "OK" : "FAIL");
     }
 }
+
+namespace {
+bool imu_enabled_check() {
+    return feat::imu();
+}
+
+bool imu_health_check(uint32_t now_ms) {
+    return imuIsHealthy(now_ms);
+}
+}  // namespace
+
+const ModuleOps imu_ops = {
+    "IMU",
+    imu_enabled_check,
+    imuInit,
+    imuUpdate,
+    imu_health_check
+};

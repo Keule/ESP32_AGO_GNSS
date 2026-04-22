@@ -31,6 +31,8 @@
 #include "logic/global_state.h"
 #include "logic/hw_status.h"
 #include "logic/imu.h"
+#include "logic/was.h"
+#include "logic/actuator.h"
 #include "logic/modules.h"
 #include "logic/net.h"
 #include "logic/ntrip.h"
@@ -467,6 +469,11 @@ void setup() {
     } else {
         // Normal operation path.
         hal_esp32_init_all();
+
+        // Module logic init (after HAL init, before module activation/state machine).
+        if (feat::imu()) { imuInit(); }
+        if (feat::ads()) { wasInit(); }
+        if (feat::act()) { actuatorInit(); }
     }
 
     // -----------------------------------------------------------------
