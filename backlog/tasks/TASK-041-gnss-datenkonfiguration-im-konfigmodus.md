@@ -5,7 +5,7 @@
 - **Status**: open
 - **Priorität**: high
 - **Komponenten**: `src/logic/runtime_config.*`, `src/logic/modules.*`, GNSS-/Bridge-Datenpfade (`PGN`, `NMEA`, `RTCM`), Konfigmodus/Serial-Web-Konfig, Persistenz (NVS/Datei)
-- **Dependencies**: TASK-009, TASK-016, TASK-017, TASK-019
+- **Dependencies**: TASK-009, TASK-016, TASK-017, TASK-019, TASK-043
 - **delivery_mode**: mixed
 - **task_category**: feature_expansion
 - **Owner**: ki-planer
@@ -117,6 +117,32 @@
   - Uneinheitliche Definition von „Profil aktiv“ vs. tatsächlich laufender Pipeline führt zu falscher Diagnose.
   - Dual-GNSS-/Failover-Pfade (`TASK-019*`) erhöhen Kombinatorik; Konfigmodus muss Primär/Sekundär- und Fallback-Semantik klar abgrenzen.
 
+- **Abgrenzung zu TASK-043 (UM980 UART-A/B)**:
+  - **TASK-041 verantwortet ausschließlich die generische GNSS-Output-Policy**:
+    - Datentyp-Klassen (z. B. `NMEA`, `RTCM`, `PGN`),
+    - Output-Rate/Profile und zulässige Grenzen,
+    - Zielpfad-Klassen (z. B. UART vs. Netzwerk/Bridge),
+    - policy-seitige Validierungsregeln (zulässig/verboten auf Policy-Ebene).
+  - **TASK-041 verantwortet nicht**:
+    - konkrete UART-A/B-Pins,
+    - konkrete Portrollen je UM980-UART,
+    - Pin-/Ressourcenkollisionen auf Hardwareebene,
+    - hardwarenahen Fallback bei UART-Initialisierungsfehlern.
+  - Diese UM980-UART-A/B-spezifischen Punkte sind ausschließlich Scope von `TASK-043`.
+
+- **Explizite Schnittstelle zu TASK-043 (von TASK-041 nur konsumiert)**:
+  - `TASK-043` liefert eine stabile, konsumierbare UART-Portbeschreibung inkl.:
+    - `enum Um980UartPortId { UART_A, UART_B }`
+    - `enum Um980UartRole { ROLE_NMEA_OUT, ROLE_RTCM_IN, ROLE_RTCM_OUT, ROLE_DIAG_MIRROR, ROLE_DISABLED }`
+    - `enum Um980UartConfigStatus { OK, PIN_CONFLICT, ROLE_CONFLICT, UNSUPPORTED_FLOW_CONTROL, FALLBACK_APPLIED }`
+    - `struct Um980UartPortConfig { port_id, baudrate, parity, stopbits, tx_pin, rx_pin, rts_pin?, cts_pin?, role, enabled }`
+    - `struct Um980UartResolvedConfig { uart_a, uart_b, status, fallback_reason? }`
+  - `TASK-041` nutzt diese Daten **read-only** zur Policy-Entscheidung:
+    - Zielpfad-Verfügbarkeit pro Datentyp,
+    - zulässige Output-Profile abhängig von aktiver Portrolle/Status,
+    - konsistente User-Diagnose im Konfigmodus.
+  - Änderungsrecht für obige UART-spezifische Enums/Felder liegt bei `TASK-043`; `TASK-041` darf nur konsumierende Zuordnungstabellen/Policy-Regeln anpassen.
+
 - **Rejected alternatives**:
   - „Freie“ Kombination aller Datentypen ohne Policy:
     - verworfen, weil Überlastung und inkonsistente Zustände wahrscheinlich sind.
@@ -138,6 +164,7 @@
   - (Falls Implementierungsinkrement startet) Build-/Smoke-Checks gemäß Folgetask
 
 - **Links**:
+  - `backlog/tasks/TASK-043-planungs-task-parametrisierung-beider-um980-uarts.md`
   - `backlog/tasks/TASK-007-gps-bridge-firmware.md`
   - `backlog/tasks/TASK-009-nmea-output-pgn100.md`
   - `backlog/tasks/TASK-016-pgn214-fixquality-age-integration.md`

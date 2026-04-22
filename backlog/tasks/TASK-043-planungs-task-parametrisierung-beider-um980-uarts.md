@@ -75,6 +75,31 @@ Die aktuelle Dual-UM980-Integration hat Bringup-, Spiegel- und Failover-Baustein
 - Unterschiedliche Board-Profile können Flow-Control-Pins nur teilweise unterstützen; Capability-Gating erforderlich.
 - Failover-Logik kann fehldeuten, wenn Rollen- oder Baudratenwechsel ohne saubere Re-Init-Sequenz erfolgen.
 
+## Abgrenzung zu TASK-041 (generische GNSS-Output-Policy)
+
+- **TASK-043 verantwortet ausschließlich UM980-UART-A/B-spezifische Parametrisierung**:
+  - konkrete Pins (`tx_pin`, `rx_pin`, optional `rts_pin`/`cts_pin`),
+  - konkrete Portrollen (`NMEA out`, `RTCM in/out`, `Diagnostik/Mirror`, `disabled`),
+  - Pin-/Rollenkollisionserkennung,
+  - UART-spezifischer Fallback bei ungültiger oder nicht initialisierbarer Konfiguration.
+- **TASK-043 verantwortet nicht**:
+  - generische Datentyp-Policy über alle GNSS-Zielpfade,
+  - globale Output-Rate/Profile-Definitionen für GNSS-Outputs,
+  - übergreifende Policy-Regeln für nicht-UART-Zielpfade.
+- Diese generischen Policy-Aspekte sind Scope von `TASK-041`.
+
+## Explizite Schnittstelle: Lieferung von TASK-043 an TASK-041
+
+`TASK-043` liefert die von `TASK-041` konsumierte UART-Schnittstelle (Provider/Consumer-Vertrag):
+
+1. `enum Um980UartPortId { UART_A, UART_B }`
+2. `enum Um980UartRole { ROLE_NMEA_OUT, ROLE_RTCM_IN, ROLE_RTCM_OUT, ROLE_DIAG_MIRROR, ROLE_DISABLED }`
+3. `enum Um980UartConfigStatus { OK, PIN_CONFLICT, ROLE_CONFLICT, UNSUPPORTED_FLOW_CONTROL, FALLBACK_APPLIED }`
+4. `struct Um980UartPortConfig { port_id, baudrate, parity, stopbits, tx_pin, rx_pin, rts_pin?, cts_pin?, role, enabled }`
+5. `struct Um980UartResolvedConfig { uart_a, uart_b, status, fallback_reason? }`
+
+**Regel:** Änderungen an diesen UART-spezifischen Feldern/Enums erfolgen in `TASK-043` (oder expliziter Folgearbeit dazu). `TASK-041` konsumiert diese Daten read-only zur Zielpfad-/Profil-Policy und führt keine eigene Hardware-Rollenmodellierung ein.
+
 ## Rejected Alternatives
 
 - **Nur ein globales UART-Profil für beide UM980**: verworfen, da keine saubere Trennung von Primär/Sekundär-Rolle und geringer Diagnosewert.
@@ -132,3 +157,14 @@ Die aktuelle Dual-UM980-Integration hat Bringup-, Spiegel- und Failover-Baustein
 
 - Noch kein expliziter neuer ADR erforderlich, sofern nur task-lokale Parametrisierungsdetails umgesetzt werden.
 - Falls neue globale Konfliktauflösungsstrategie für Rollen/Pins eingeführt wird, ADR-Update erforderlich.
+
+## Links
+
+- `backlog/tasks/TASK-041-gnss-datenkonfiguration-im-konfigmodus.md`
+- `backlog/tasks/TASK-019-integrationsplanung-zwei-um980.md`
+- `backlog/tasks/TASK-019A-pinbelegung-um980-und-konsole.md`
+- `backlog/tasks/TASK-019C-gnss-bringup-modus.md`
+- `backlog/tasks/TASK-019D-uart1-uart2-console-mirror.md`
+- `backlog/tasks/TASK-019F-dual-um980-failover-logik.md`
+- `backlog/tasks/TASK-014-hal-gnss-rtcm-uart-forwarding.md`
+- `backlog/tasks/TASK-017-rtcm-validierung-agiou-m980.md`
