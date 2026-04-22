@@ -8,7 +8,7 @@
 - **Dependencies**: []
 - **delivery_mode**: mixed (hardware_required für Validierung, firmware_only für Implementierung)
 - **task_category**: runtime_stability
-- **Owner**: ki-entwickler
+- **Owner**: ki-planer
 - **Epic**: EPIC-001
 
 - **classification**: independent
