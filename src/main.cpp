@@ -39,6 +39,7 @@
 #include "logic/runtime_config.h"
 #include "logic/sd_ota.h"
 #include "logic/sd_logger.h"
+#include "logic/cli.h"
 
 #include "logic/log_config.h"
 #undef LOG_LOCAL_LEVEL          // Arduino.h already defined it via esp_log.h
@@ -543,6 +544,8 @@ void setup() {
         return;
     }
 
+    cliInit();
+
     // Initialise module system – detect hardware for all modules
     modulesInit();
 
@@ -862,27 +865,30 @@ void loop() {
         }
     }
 
-#if LOG_SERIAL_CMD
-    // Runtime logging control:
-    //   log <tag> <none|error|warn|info|debug|verbose>
-    //   log all <level>
-    //   log status
-    //   filter <file[:line]> | filter off
-    static char cmd_buf[96];
-    static size_t cmd_len = 0;
+    // --- Serial CLI ---
+    static char s_cli_buf[128];
+    static size_t s_cli_len = 0;
+
     while (Serial.available()) {
         const int ch = Serial.read();
         if (ch == '\r' || ch == '\n') {
-            if (cmd_len > 0) {
-                cmd_buf[cmd_len] = '\0';
-                logProcessSerialCmd(cmd_buf);
-                cmd_len = 0;
+            if (s_cli_len > 0) {
+                s_cli_buf[s_cli_len] = '\0';
+                cliProcessLine(s_cli_buf);
+                s_cli_len = 0;
             }
-        } else if (cmd_len + 1 < sizeof(cmd_buf)) {
-            cmd_buf[cmd_len++] = static_cast<char>(ch);
+        } else if (ch == 3) {  // Ctrl+C
+            s_cli_len = 0;
+            Serial.println("^C");
+        } else if (ch == 8 || ch == 127) {  // Backspace / DEL
+            if (s_cli_len > 0) {
+                s_cli_len--;
+                Serial.print("\b \b");
+            }
+        } else if (s_cli_len + 1 < sizeof(s_cli_buf)) {
+            s_cli_buf[s_cli_len++] = static_cast<char>(ch);
         }
     }
-#endif
 
     vTaskDelay(pdMS_TO_TICKS(100));
 }
