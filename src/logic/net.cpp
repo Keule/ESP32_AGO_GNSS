@@ -27,7 +27,10 @@
 #include "modules.h"
 #include "control.h"
 #include "dependency_policy.h"
+#include "diag.h"
 #include "global_state.h"
+#include "runtime_config.h"
+#include "setup_wizard.h"
 #include "hal/hal.h"
 
 #include "log_config.h"
@@ -36,6 +39,7 @@
 #include "log_ext.h"
 
 #include <climits>
+#include <cctype>
 #include <cstring>
 
 // ===================================================================
@@ -44,6 +48,14 @@
 constexpr uint8_t STATUS_BIT_WORK_SWITCH   = 0x01;  // bit 0
 constexpr uint8_t STATUS_BIT_STEER_SWITCH  = 0x02;  // bit 1
 constexpr uint8_t STATUS_BIT_STEER_ON      = 0x04;  // bit 2
+constexpr uint8_t CONFIG_BIT_INVERT_WAS            = 0x01;  // PGN251 set0 bit0
+constexpr uint8_t CONFIG_BIT_RELAY_ACTIVE_HIGH     = 0x02;  // PGN251 set0 bit1
+constexpr uint8_t CONFIG_BIT_MOTOR_DIR_INVERT      = 0x04;  // PGN251 set0 bit2
+constexpr uint8_t CONFIG_BIT_SINGLE_INPUT_WAS      = 0x08;  // PGN251 set0 bit3
+constexpr uint8_t CONFIG_BIT_DRIVER_CYTRON         = 0x10;  // PGN251 set0 bit4
+constexpr uint8_t CONFIG_BIT_STEER_SWITCH_ENABLE   = 0x20;  // PGN251 set0 bit5
+constexpr uint8_t CONFIG_BIT_STEER_BUTTON_ENABLE   = 0x40;  // PGN251 set0 bit6
+constexpr uint8_t CONFIG_BIT_SHAFT_ENCODER_ENABLE  = 0x80;  // PGN251 set0 bit7
 constexpr int16_t STEER_STATUS_HEADING_INVALID_X10 = 9999;
 constexpr int16_t STEER_STATUS_ROLL_INVALID_X10 = 8888;
 
@@ -115,6 +127,61 @@ static uint16_t speedKmhToMmPerSec(float speed_kmh) {
     const float mm_per_sec = speed_kmh * (1000000.0f / 3600.0f);
     if (mm_per_sec >= 65535.0f) return 65535u;
     return static_cast<uint16_t>(mm_per_sec);
+}
+
+static bool startsWithIgnoreCase(const char* text, const char* prefix) {
+    if (!text || !prefix) return false;
+    while (*prefix) {
+        if (*text == '\0') return false;
+        if (std::tolower(static_cast<unsigned char>(*text)) !=
+            std::tolower(static_cast<unsigned char>(*prefix))) {
+            return false;
+        }
+        ++text;
+        ++prefix;
+    }
+    return true;
+}
+
+static void processHardwareMessageCommand(const char* msg_text) {
+    if (!msg_text || !*msg_text) return;
+
+    if (startsWithIgnoreCase(msg_text, "diag net")) {
+        diagPrintNet();
+        return;
+    }
+    if (startsWithIgnoreCase(msg_text, "diag mem")) {
+        diagPrintMem();
+        return;
+    }
+    if (startsWithIgnoreCase(msg_text, "diag hw")) {
+        diagPrintHw();
+        return;
+    }
+    if (startsWithIgnoreCase(msg_text, "setup start")) {
+        setupWizardRequestStart();
+        LOGI("NET", "HW message command accepted: setup wizard requested");
+        return;
+    }
+}
+
+static void applySteerConfigBits(const AogSteerConfigIn& config) {
+    // Mirror motor driver selection to runtime config:
+    // set0 bit4 = 1 -> Cytron, 0 -> IBT2 (legacy AOG semantics).
+    RuntimeConfig& rt_cfg = softConfigGet();
+    rt_cfg.actuator_type =
+        (config.set0 & CONFIG_BIT_DRIVER_CYTRON) ? 1U : 2U;
+
+    LOGI("NET",
+         "SteerConfig bits: invert_was=%u relay_active_high=%u motor_dir_invert=%u single_was=%u driver=%s steer_switch=%u steer_button=%u shaft_encoder=%u",
+         (unsigned)((config.set0 & CONFIG_BIT_INVERT_WAS) != 0),
+         (unsigned)((config.set0 & CONFIG_BIT_RELAY_ACTIVE_HIGH) != 0),
+         (unsigned)((config.set0 & CONFIG_BIT_MOTOR_DIR_INVERT) != 0),
+         (unsigned)((config.set0 & CONFIG_BIT_SINGLE_INPUT_WAS) != 0),
+         (config.set0 & CONFIG_BIT_DRIVER_CYTRON) ? "Cytron" : "IBT2",
+         (unsigned)((config.set0 & CONFIG_BIT_STEER_SWITCH_ENABLE) != 0),
+         (unsigned)((config.set0 & CONFIG_BIT_STEER_BUTTON_ENABLE) != 0),
+         (unsigned)((config.set0 & CONFIG_BIT_SHAFT_ENCODER_ENABLE) != 0));
 }
 
 // ===================================================================
@@ -315,7 +382,7 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
                                          msg_text, sizeof(msg_text))) {
                 LOGI("NET", "HW message from AgIO: [%u] (col=%u) \"%s\"",
                         (unsigned)dur, (unsigned)color, msg_text);
-                // TODO: display on connected LCD, or process commands
+                processHardwareMessageCommand(msg_text);
             }
             break;
         }
@@ -351,10 +418,7 @@ void netProcessFrame(uint8_t src, uint8_t pgn,
                     g_nav.pid.config_min_speed = config.minSpeed;
                     g_nav.pid.config_received  = true;
                 }
-
-                // TODO: apply hardware config bits (invert WAS, relay polarity,
-                // motor direction, Cytron driver mode, etc.)
-                // Reference does a hard reset after config – we log only for now.
+                applySteerConfigBits(config);
             }
             break;
         }
