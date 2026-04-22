@@ -544,6 +544,29 @@ bool moduleIsActive(FirmwareFeatureId id) {
     return g_features[id].state == MOD_ON;
 }
 
+bool moduleControlPipelineReady(char* reason_buf, size_t reason_buf_len) {
+    auto set_reason = [&](const char* msg) {
+        if (!reason_buf || reason_buf_len == 0) return;
+        std::snprintf(reason_buf, reason_buf_len, "%s", msg);
+    };
+
+    if (!moduleIsActive(MOD_IMU)) {
+        set_reason("MOD_IMU inactive");
+        return false;
+    }
+    if (!moduleIsActive(MOD_ADS)) {
+        set_reason("MOD_ADS inactive");
+        return false;
+    }
+    if (!moduleIsActive(MOD_ACT)) {
+        set_reason("MOD_ACT inactive");
+        return false;
+    }
+
+    set_reason("OK");
+    return true;
+}
+
 ModState moduleGetState(FirmwareFeatureId id) {
     if (id >= MOD_COUNT) return MOD_UNAVAILABLE;
     return static_cast<ModState>(g_features[id].state);
