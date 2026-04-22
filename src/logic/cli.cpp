@@ -8,6 +8,9 @@
 #include "cli.h"
 
 #include "log_ext.h"
+#include "nvs_config.h"
+#include "runtime_config.h"
+#include "ntrip.h"
 
 #include <Arduino.h>
 #include <esp_system.h>
@@ -15,6 +18,7 @@
 #include <freertos/task.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -78,6 +82,123 @@ void cliCmdRestart(int, char**) {
     ESP.restart();
 }
 
+void cliCmdSave(int, char**) {
+    RuntimeConfig& cfg = softConfigGet();
+    if (nvsConfigSave(cfg)) {
+        Serial.println("Config saved to NVS.");
+        Serial.println("WARNING: ntrip_password is stored in plaintext for now.");
+    } else {
+        Serial.println("ERROR: failed to save config to NVS.");
+    }
+}
+
+void cliCmdLoad(int, char**) {
+    RuntimeConfig& cfg = softConfigGet();
+    nvsConfigLoad(cfg);
+    Serial.println("Config loaded from NVS.");
+}
+
+void cliCmdFactory(int argc, char** argv) {
+    if (argc < 2 || std::strcmp(argv[1], "confirm") != 0) {
+        Serial.println("WARNING: This will erase all saved configuration.");
+        Serial.println("Run: factory confirm");
+        return;
+    }
+
+    nvsConfigFactoryReset();
+    Serial.println("NVS erased. Restarting with defaults...");
+    Serial.flush();
+    ESP.restart();
+}
+
+#if FEAT_ENABLED(FEAT_COMPILED_NTRIP)
+const char* ntripConnStateToStr(NtripConnState state) {
+    switch (state) {
+        case NtripConnState::IDLE: return "IDLE";
+        case NtripConnState::CONNECTING: return "CONNECTING";
+        case NtripConnState::AUTHENTICATING: return "AUTHENTICATING";
+        case NtripConnState::CONNECTED: return "CONNECTED";
+        case NtripConnState::DISCONNECTED: return "DISCONNECTED";
+        case NtripConnState::ERROR: return "ERROR";
+        default: return "UNKNOWN";
+    }
+}
+#endif
+
+void cliCmdNtrip(int argc, char** argv) {
+#if FEAT_ENABLED(FEAT_COMPILED_NTRIP)
+    RuntimeConfig& cfg = softConfigGet();
+    if (argc < 2) {
+        Serial.println("usage: ntrip <show|status|set|connect|disconnect>");
+        return;
+    }
+
+    if (std::strcmp(argv[1], "show") == 0 || std::strcmp(argv[1], "status") == 0) {
+        const NtripState state = ntripGetState();
+        Serial.println("NTRIP:");
+        Serial.printf("  Host:       %s\n", cfg.ntrip_host);
+        Serial.printf("  Port:       %u\n", static_cast<unsigned>(cfg.ntrip_port));
+        Serial.printf("  Mountpoint: %s\n", cfg.ntrip_mountpoint);
+        Serial.printf("  User:       %s\n", cfg.ntrip_user);
+        Serial.printf("  Password:   %s\n", cfg.ntrip_password[0] ? "********" : "(empty)");
+        Serial.printf("  State:      %s\n", ntripConnStateToStr(state.conn_state));
+        Serial.printf("  Bytes RX:   %lu\n", static_cast<unsigned long>(state.rx_bytes));
+        Serial.printf("  Fwd bytes:  %lu\n", static_cast<unsigned long>(state.forwarded_bytes));
+        return;
+    }
+
+    if (std::strcmp(argv[1], "set") == 0) {
+        if (argc < 4) {
+            Serial.println("usage: ntrip set <host|port|mount|user|pass> <value>");
+            return;
+        }
+        if (std::strcmp(argv[2], "host") == 0) {
+            std::strncpy(cfg.ntrip_host, argv[3], sizeof(cfg.ntrip_host) - 1);
+            cfg.ntrip_host[sizeof(cfg.ntrip_host) - 1] = '\0';
+        } else if (std::strcmp(argv[2], "port") == 0) {
+            cfg.ntrip_port = static_cast<uint16_t>(std::atoi(argv[3]));
+        } else if (std::strcmp(argv[2], "mount") == 0 || std::strcmp(argv[2], "mountpoint") == 0) {
+            std::strncpy(cfg.ntrip_mountpoint, argv[3], sizeof(cfg.ntrip_mountpoint) - 1);
+            cfg.ntrip_mountpoint[sizeof(cfg.ntrip_mountpoint) - 1] = '\0';
+        } else if (std::strcmp(argv[2], "user") == 0) {
+            std::strncpy(cfg.ntrip_user, argv[3], sizeof(cfg.ntrip_user) - 1);
+            cfg.ntrip_user[sizeof(cfg.ntrip_user) - 1] = '\0';
+        } else if (std::strcmp(argv[2], "pass") == 0 || std::strcmp(argv[2], "password") == 0) {
+            std::strncpy(cfg.ntrip_password, argv[3], sizeof(cfg.ntrip_password) - 1);
+            cfg.ntrip_password[sizeof(cfg.ntrip_password) - 1] = '\0';
+        } else {
+            Serial.println("usage: ntrip set <host|port|mount|user|pass> <value>");
+            return;
+        }
+
+        ntripSetConfig(cfg.ntrip_host, cfg.ntrip_port, cfg.ntrip_mountpoint, cfg.ntrip_user, cfg.ntrip_password);
+        Serial.println("NTRIP config updated (runtime).");
+        return;
+    }
+
+    if (std::strcmp(argv[1], "connect") == 0) {
+        ntripSetConfig(cfg.ntrip_host, cfg.ntrip_port, cfg.ntrip_mountpoint, cfg.ntrip_user, cfg.ntrip_password);
+        Serial.println("NTRIP connect requested (state machine will connect).");
+        return;
+    }
+
+    if (std::strcmp(argv[1], "disconnect") == 0) {
+        // Force IDLE by clearing host/mount at runtime.
+        cfg.ntrip_host[0] = '\0';
+        cfg.ntrip_mountpoint[0] = '\0';
+        ntripSetConfig(cfg.ntrip_host, cfg.ntrip_port, cfg.ntrip_mountpoint, cfg.ntrip_user, cfg.ntrip_password);
+        Serial.println("NTRIP disconnected (runtime config cleared host/mount).");
+        return;
+    }
+
+    Serial.println("usage: ntrip <show|status|set|connect|disconnect>");
+#else
+    (void)argc;
+    (void)argv;
+    Serial.println("NTRIP not compiled in this profile.");
+#endif
+}
+
 void cliCmdUnknown(const char* cmd) {
     Serial.printf("Unknown command: %s\n", cmd ? cmd : "");
     Serial.println("Type 'help' for available commands.");
@@ -108,6 +229,10 @@ void cliInit(void) {
     (void)cliRegisterCommand("free", &cliCmdFree, "Show heap/PSRAM memory");
     (void)cliRegisterCommand("tasks", &cliCmdTasks, "Show FreeRTOS task list");
     (void)cliRegisterCommand("restart", &cliCmdRestart, "Restart ESP32");
+    (void)cliRegisterCommand("save", &cliCmdSave, "Save runtime config to NVS");
+    (void)cliRegisterCommand("load", &cliCmdLoad, "Load runtime config from NVS");
+    (void)cliRegisterCommand("factory", &cliCmdFactory, "Factory reset (use: factory confirm)");
+    (void)cliRegisterCommand("ntrip", &cliCmdNtrip, "NTRIP runtime config and status");
 }
 
 bool cliRegisterCommand(const char* cmd,

@@ -36,6 +36,7 @@
 #include "logic/modules.h"
 #include "logic/net.h"
 #include "logic/ntrip.h"
+#include "logic/nvs_config.h"
 #include "logic/runtime_config.h"
 #include "logic/sd_ota.h"
 #include "logic/sd_logger.h"
@@ -504,6 +505,7 @@ void setup() {
 
         // Initialise soft config from compile-time defaults — TASK-028
         softConfigLoadDefaults(softConfigGet());
+        nvsConfigLoad(softConfigGet());
         softConfigLoadOverrides(softConfigGet());  // TASK-033: reads /ntrip.cfg from SD
 
 #if FEAT_ENABLED(FEAT_COMPILED_NTRIP)
@@ -596,6 +598,7 @@ void setup() {
     // the compile-time defaults defined in include/soft_config.h.
     // -----------------------------------------------------------------
     softConfigLoadDefaults(softConfigGet());
+    nvsConfigLoad(softConfigGet());
     if (moduleIsActive(MOD_SD)) {
         softConfigLoadOverrides(softConfigGet());  // TASK-033: reads /ntrip.cfg from SD
     } else {
