@@ -11,11 +11,21 @@
 #include "hal/hal.h"
 
 static Um980UartSetup s_um980_setup;
-static char s_console_line_a[96] = {0};
-static char s_console_line_b[96] = {0};
+static constexpr size_t CONSOLE_SEGMENT_WIDTH = 60;
+static constexpr size_t CONSOLE_TOTAL_WIDTH = CONSOLE_SEGMENT_WIDTH * 2;
+static char s_console_acc_a[CONSOLE_SEGMENT_WIDTH + 1] = {0};
+static char s_console_acc_b[CONSOLE_SEGMENT_WIDTH + 1] = {0};
 static size_t s_console_len_a = 0;
 static size_t s_console_len_b = 0;
+static char s_console_frame[CONSOLE_TOTAL_WIDTH + 1] = {0};
 static bool s_console_dirty = false;
+
+static void resetConsoleFrame(void) {
+    for (size_t i = 0; i < CONSOLE_TOTAL_WIDTH; ++i) {
+        s_console_frame[i] = ' ';
+    }
+    s_console_frame[CONSOLE_TOTAL_WIDTH] = '\0';
+}
 
 void um980SetupLoadDefaults(uint32_t baud_default) {
     const uint32_t baud = (baud_default == 0) ? 460800u : baud_default;
@@ -25,10 +35,11 @@ void um980SetupLoadDefaults(uint32_t baud_default) {
     s_um980_setup.swap_b = false;
     s_um980_setup.console_a = false;
     s_um980_setup.console_b = false;
-    s_console_line_a[0] = '\0';
-    s_console_line_b[0] = '\0';
+    s_console_acc_a[0] = '\0';
+    s_console_acc_b[0] = '\0';
     s_console_len_a = 0;
     s_console_len_b = 0;
+    resetConsoleFrame();
     s_console_dirty = false;
 }
 
@@ -61,18 +72,34 @@ void um980SetupSetConsole(uint8_t port_idx, bool enabled) {
     }
 }
 
-static void appendConsoleByte(char* line, size_t* line_len, uint8_t byte) {
+static void updateConsoleSegment(size_t segment_start, const char* text) {
+    if (!text || segment_start >= CONSOLE_TOTAL_WIDTH) return;
+    const size_t segment_end = segment_start + CONSOLE_SEGMENT_WIDTH;
+    for (size_t i = segment_start; i < segment_end && i < CONSOLE_TOTAL_WIDTH; ++i) {
+        s_console_frame[i] = ' ';
+    }
+
+    size_t out = 0;
+    while (text[out] != '\0' && out < CONSOLE_SEGMENT_WIDTH) {
+        s_console_frame[segment_start + out] = text[out];
+        ++out;
+    }
+}
+
+static void appendConsoleByte(char* line, size_t* line_len, uint8_t byte, size_t segment_start) {
     if (!line || !line_len) return;
     if (byte == '\r') return;
     if (byte == '\n') {
         line[*line_len] = '\0';
+        updateConsoleSegment(segment_start, line);
         s_console_dirty = true;
         *line_len = 0;
         return;
     }
     if (byte < 32 || byte > 126) return;
-    if (*line_len + 1 >= 95) {
+    if (*line_len + 1 >= CONSOLE_SEGMENT_WIDTH) {
         line[*line_len] = '\0';
+        updateConsoleSegment(segment_start, line);
         s_console_dirty = true;
         *line_len = 0;
     }
@@ -80,23 +107,23 @@ static void appendConsoleByte(char* line, size_t* line_len, uint8_t byte) {
     line[*line_len] = '\0';
 }
 
-static void pollConsole(HardwareSerial& uart, bool enabled, char* line, size_t* line_len) {
+static void pollConsole(HardwareSerial& uart, bool enabled, char* line, size_t* line_len, size_t segment_start) {
     if (!enabled) return;
     int budget = 96;
     while (budget-- > 0 && uart.available() > 0) {
         const int value = uart.read();
         if (value < 0) break;
-        appendConsoleByte(line, line_len, static_cast<uint8_t>(value));
+        appendConsoleByte(line, line_len, static_cast<uint8_t>(value), segment_start);
     }
 }
 
 void um980SetupConsoleTick(void) {
-    pollConsole(Serial1, s_um980_setup.console_a, s_console_line_a, &s_console_len_a);
-    pollConsole(Serial2, s_um980_setup.console_b, s_console_line_b, &s_console_len_b);
+    pollConsole(Serial1, s_um980_setup.console_a, s_console_acc_a, &s_console_len_a, 0);
+    pollConsole(Serial2, s_um980_setup.console_b, s_console_acc_b, &s_console_len_b, CONSOLE_SEGMENT_WIDTH);
     if (!s_console_dirty) return;
 
     Serial.print("\r");
-    Serial.printf("[A]%s | [B]%s      ", s_console_line_a, s_console_line_b);
+    Serial.print(s_console_frame);
     s_console_dirty = false;
 }
 
