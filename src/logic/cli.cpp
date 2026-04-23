@@ -7,6 +7,7 @@
 
 #include "cli.h"
 
+#include "log_config.h"
 #include "log_ext.h"
 #include "nvs_config.h"
 #include "runtime_config.h"
