@@ -479,8 +479,22 @@ static bool claimEthPins(void) {
 }
 
 static bool claimGnssUartPins(uint8_t uart_num, int rx_pin, int tx_pin) {
+    auto tx_pin_is_output_capable = [](int pin) -> bool {
+        if (pin < 0) return false;
+#if defined(CONFIG_IDF_TARGET_ESP32)
+        if (pin >= 34 && pin <= 39) return false;  // input-only on classic ESP32
+#endif
+        return true;
+    };
+
     if (tx_pin < 0) {
         LOGE("HAL", "GNSS RTCM claim failed: UART%u TX unresolved", static_cast<unsigned>(uart_num));
+        return false;
+    }
+    if (!tx_pin_is_output_capable(tx_pin)) {
+        LOGE("HAL", "GNSS RTCM claim failed: UART%u TX pin %d is input-only (cannot drive UART TX)",
+             static_cast<unsigned>(uart_num),
+             tx_pin);
         return false;
     }
     if (rx_pin >= 38 && rx_pin <= 42) {
@@ -595,6 +609,12 @@ bool hal_gnss_rtcm_begin(uint32_t baud, int8_t rx_pin, int8_t tx_pin) {
         LOGE("HAL", "GNSS RTCM begin failed: TX pin must be >= 0");
         return false;
     }
+#if defined(CONFIG_IDF_TARGET_ESP32)
+    if (tx_pin >= 34 && tx_pin <= 39) {
+        LOGE("HAL", "GNSS RTCM begin failed: TX pin %d is input-only on ESP32", tx_pin);
+        return false;
+    }
+#endif
 
     if (!s_gnss_rtcm_mutex) {
         s_gnss_rtcm_mutex = xSemaphoreCreateMutex();
@@ -723,6 +743,13 @@ bool hal_gnss_uart_begin(uint8_t inst, uint32_t baud, int8_t rx_pin, int8_t tx_p
         LOGE("HAL", "GNSS UART begin: inst %u TX pin must be >= 0", static_cast<unsigned>(inst));
         return false;
     }
+#if defined(CONFIG_IDF_TARGET_ESP32)
+    if (tx_pin >= 34 && tx_pin <= 39) {
+        LOGE("HAL", "GNSS UART begin: inst %u TX pin %d is input-only on ESP32",
+             static_cast<unsigned>(inst), tx_pin);
+        return false;
+    }
+#endif
     if (rx_pin >= 38 && rx_pin <= 42) {
         LOGE("HAL", "GNSS UART begin: inst %u RX pin %d is output-only on ESP32-S3",
              static_cast<unsigned>(inst), rx_pin);
