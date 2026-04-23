@@ -20,6 +20,7 @@
 #include <freertos/FreeRTOS.h>
 #include <esp_task_wdt.h>
 #include <esp_ota_ops.h>
+#include <nvs_flash.h>
 #include <cstdio>
 #include <cstring>
 
@@ -69,6 +70,29 @@ static constexpr uint32_t MAIN_GNSS_BUILDUP_STATUS_INTERVAL_MS = 2000;
 static uint32_t s_gnss_buildup_start_ms = 0;
 static bool s_gnss_buildup_fallback_latched = false;
 static constexpr size_t MAIN_BOOT_CLI_BUF_CAP = 128;
+
+static void initNvsFlashStorage(void) {
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_OK) {
+        return;
+    }
+
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        hal_log("BOOT: NVS init returned %s -> erasing NVS partition",
+                esp_err_to_name(err));
+        const esp_err_t erase_err = nvs_flash_erase();
+        if (erase_err != ESP_OK) {
+            hal_log("BOOT: NVS erase failed: %s", esp_err_to_name(erase_err));
+            return;
+        }
+
+        err = nvs_flash_init();
+    }
+
+    if (err != ESP_OK) {
+        hal_log("BOOT: NVS init failed: %s", esp_err_to_name(err));
+    }
+}
 
 static inline bool shouldLogPeriodic(uint32_t now_ms, uint32_t* last_ms, uint32_t interval_ms) {
     if (now_ms - *last_ms < interval_ms) return false;
@@ -507,6 +531,8 @@ static void commTaskFunc(void* param) {
 void setup() {
     const uint32_t t_boot_start = hal_millis();
     uint32_t t_phase = t_boot_start;
+
+    initNvsFlashStorage();
 
 #if defined(FEAT_IMU_BRINGUP) && defined(FEAT_GNSS_BUILDUP)
 #error "FEAT_IMU_BRINGUP and FEAT_GNSS_BUILDUP are mutually exclusive."
