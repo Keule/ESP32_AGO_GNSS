@@ -71,20 +71,18 @@ bool imu_health_check(uint32_t now_ms) {
     return imuIsHealthy(now_ms);
 }
 
-namespace {
-bool imu_enabled_check() {
+static bool imu_module_enabled_check() {
     return feat::imu();
 }
 
-bool imu_health_check(uint32_t now_ms) {
+static bool imu_module_health_check(uint32_t now_ms) {
     return imuIsHealthy(now_ms);
 }
-}  // namespace
 
 const ModuleOps imu_ops = {
     "IMU",
-    imu_enabled_check,
+    imu_module_enabled_check,
     imuInit,
     imuUpdate,
-    imu_health_check
+    imu_module_health_check
 };

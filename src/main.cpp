@@ -126,7 +126,7 @@ static void formatIpU32(uint32_t ip, char* out, size_t out_sz) {
                   static_cast<unsigned>(ip & 0xFF));
 }
 
-static void runBootCliSession(void) {
+static void bootMaintRunCliSession(void) {
     Serial.println();
     Serial.println("=== Boot CLI ===");
     Serial.println("System init complete. Type commands now.");
@@ -214,7 +214,7 @@ static void runBootCliSession(void) {
     }
 }
 
-static void bootWebHandleRoot(void) {
+static void bootMaintWebHandleRoot(void) {
     static const char kPage[] =
         "<!doctype html><html><head><meta charset='utf-8'><title>AgSteer OTA</title></head>"
         "<body><h2>AgSteer Boot OTA</h2>"
@@ -226,7 +226,7 @@ static void bootWebHandleRoot(void) {
     s_boot_web_server.send(200, "text/html", kPage);
 }
 
-static void bootWebHandleUpdateDone(void) {
+static void bootMaintWebHandleUpdateDone(void) {
     const bool ok = !Update.hasError();
     s_boot_web_server.send(200, "text/plain", ok ? "OK - rebooting" : "FAIL");
     if (ok) {
@@ -236,7 +236,7 @@ static void bootWebHandleUpdateDone(void) {
     }
 }
 
-static void bootWebHandleUpdateUpload(void) {
+static void bootMaintWebHandleUpdateUpload(void) {
     HTTPUpload& upload = s_boot_web_server.upload();
     if (upload.status == UPLOAD_FILE_START) {
         hal_log("BOOT: Web OTA upload start: %s", upload.filename.c_str());
@@ -262,7 +262,7 @@ static void bootWebHandleUpdateUpload(void) {
     }
 }
 
-static void startBootMaintenanceServices(void) {
+static void bootMaintStartServices(void) {
     WiFi.persistent(false);
     WiFi.disconnect(true, true);
     delay(100);
@@ -286,8 +286,8 @@ static void startBootMaintenanceServices(void) {
         hal_log("BOOT: WiFi AP start failed (SSID=%s)", MAIN_BOOT_AP_SSID);
     }
 
-    s_boot_web_server.on("/", HTTP_GET, bootWebHandleRoot);
-    s_boot_web_server.on("/update", HTTP_POST, bootWebHandleUpdateDone, bootWebHandleUpdateUpload);
+    s_boot_web_server.on("/", HTTP_GET, bootMaintWebHandleRoot);
+    s_boot_web_server.on("/update", HTTP_POST, bootMaintWebHandleUpdateDone, bootMaintWebHandleUpdateUpload);
     s_boot_web_server.begin();
     s_boot_web_ota_active = true;
     hal_log("BOOT: Web OTA active at http://%s/", WiFi.softAPIP().toString().c_str());
@@ -311,7 +311,7 @@ static void startBootMaintenanceServices(void) {
 #endif
 }
 
-static void stopBootMaintenanceServices(void) {
+static void bootMaintStopServices(void) {
 #if MAIN_BT_SPP_AVAILABLE
     if (s_boot_bt_active) {
         s_boot_bt_serial.end();
@@ -882,9 +882,9 @@ void setup() {
     const bool boot_maintenance_mode = !hal_safety_ok();
     if (boot_maintenance_mode) {
         hal_log("BOOT: maintenance mode active (safety LOW)");
-        startBootMaintenanceServices();
-        runBootCliSession();
-        stopBootMaintenanceServices();
+        bootMaintStartServices();
+        bootMaintRunCliSession();
+        bootMaintStopServices();
     } else {
         hal_log("BOOT: maintenance mode skipped (safety not LOW)");
     }
