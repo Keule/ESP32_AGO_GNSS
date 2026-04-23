@@ -43,6 +43,7 @@
 #include "logic/sd_logger.h"
 #include "logic/cli.h"
 #include "logic/setup_wizard.h"
+#include "logic/um980_uart_setup.h"
 
 #include "logic/log_config.h"
 #undef LOG_LOCAL_LEVEL          // Arduino.h already defined it via esp_log.h
@@ -73,22 +74,6 @@ static inline bool shouldLogPeriodic(uint32_t now_ms, uint32_t* last_ms, uint32_
     if (now_ms - *last_ms < interval_ms) return false;
     *last_ms = now_ms;
     return true;
-}
-
-static void setupUm980Uarts(uint32_t baud) {
-    if (baud == 0) baud = 460800;
-
-    const bool um980_a_ok = hal_gnss_uart_begin(0, baud, GNSS_UART1_RX, GNSS_UART1_TX);
-    const bool um980_b_ok = hal_gnss_uart_begin(1, baud, GNSS_UART2_RX, GNSS_UART2_TX);
-
-    hal_log("Main: UM980 UART setup baud=%lu -> A(UART1 rx=%d tx=%d)=%s B(UART2 rx=%d tx=%d)=%s",
-            static_cast<unsigned long>(baud),
-            static_cast<int>(GNSS_UART1_RX),
-            static_cast<int>(GNSS_UART1_TX),
-            um980_a_ok ? "OK" : "FAIL",
-            static_cast<int>(GNSS_UART2_RX),
-            static_cast<int>(GNSS_UART2_TX),
-            um980_b_ok ? "OK" : "FAIL");
 }
 
 static void runBootCliSession(void) {
@@ -688,7 +673,8 @@ void setup() {
         setupWizardRequestStart();
     }
 
-    setupUm980Uarts(softConfigGet().gnss_baud);
+    um980SetupLoadDefaults(softConfigGet().gnss_baud);
+    um980SetupApply();
     runBootCliSession();
 
     // Initialise control system (PID controller with default gains).
