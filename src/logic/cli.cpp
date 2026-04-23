@@ -527,78 +527,123 @@ static bool parseOnOff(const char* text, bool* out_value) {
     return false;
 }
 
-void cliCmdSetup(int argc, char** argv) {
-    if (argc == 1) {
-        setupWizardRequestStart();
-        Serial.println("Setup wizard requested. It will start in loop context.");
+static bool parseUartPort(const char* text, uint8_t* out_port) {
+    if (!text || !out_port) return false;
+    if (std::strcmp(text, "a") == 0 || std::strcmp(text, "A") == 0) {
+        *out_port = 0;
+        return true;
+    }
+    if (std::strcmp(text, "b") == 0 || std::strcmp(text, "B") == 0) {
+        *out_port = 1;
+        return true;
+    }
+    return false;
+}
+
+void cliCmdUart(int argc, char** argv) {
+    if (argc < 2) {
+        Serial.println("usage: uart <show|apply|set|console>");
         return;
     }
 
-    if (std::strcmp(argv[1], "uart") == 0) {
-        if (argc == 2 || std::strcmp(argv[2], "show") == 0) {
-            const Um980UartSetup setup = um980SetupGet();
-            Serial.println("UM980 UART setup:");
-            Serial.printf("  Baud:   %lu\n", static_cast<unsigned long>(setup.baud));
-            Serial.printf("  Swap A: %s\n", setup.swap_a ? "ON" : "OFF");
-            Serial.printf("  Swap B: %s\n", setup.swap_b ? "ON" : "OFF");
-            Serial.println("  Apply with: setup uart apply");
+    if (std::strcmp(argv[1], "show") == 0) {
+        const Um980UartSetup setup = um980SetupGet();
+        Serial.println("UM980 UART setup:");
+        Serial.printf("  A: baud=%lu swap=%s console=%s\n",
+                      static_cast<unsigned long>(setup.baud_a),
+                      setup.swap_a ? "ON" : "OFF",
+                      setup.console_a ? "ON" : "OFF");
+        Serial.printf("  B: baud=%lu swap=%s console=%s\n",
+                      static_cast<unsigned long>(setup.baud_b),
+                      setup.swap_b ? "ON" : "OFF",
+                      setup.console_b ? "ON" : "OFF");
+        return;
+    }
+
+    if (std::strcmp(argv[1], "apply") == 0) {
+        if (argc < 3 || std::strcmp(argv[2], "all") == 0) {
+            const bool ok = um980SetupApply();
+            Serial.printf("UM980 UART apply all -> %s\n", ok ? "OK" : "ERROR");
             return;
         }
+        uint8_t port = 0;
+        if (!parseUartPort(argv[2], &port)) {
+            Serial.println("usage: uart apply <a|b|all>");
+            return;
+        }
+        const bool ok = um980SetupApplyPort(port);
+        Serial.printf("UM980 UART apply %c -> %s\n", port == 0 ? 'A' : 'B', ok ? "OK" : "ERROR");
+        return;
+    }
 
-        if (std::strcmp(argv[2], "baud") == 0) {
-            if (argc < 4) {
-                Serial.println("usage: setup uart baud <value>");
-                return;
-            }
-            const uint32_t baud = static_cast<uint32_t>(std::strtoul(argv[3], nullptr, 10));
+    if (std::strcmp(argv[1], "set") == 0) {
+        if (argc < 5) {
+            Serial.println("usage: uart set <a|b> <baud|swap> <value>");
+            return;
+        }
+        uint8_t port = 0;
+        if (!parseUartPort(argv[2], &port)) {
+            Serial.println("usage: uart set <a|b> <baud|swap> <value>");
+            return;
+        }
+        if (std::strcmp(argv[3], "baud") == 0) {
+            const uint32_t baud = static_cast<uint32_t>(std::strtoul(argv[4], nullptr, 10));
             if (baud == 0) {
                 Serial.println("ERROR: invalid baud value.");
                 return;
             }
-            um980SetupSetBaud(baud);
-            Serial.printf("UM980 UART baud set to %lu (pending apply).\n",
+            um980SetupSetBaud(port, baud);
+            Serial.printf("UM980 UART %c baud set to %lu (pending apply).\n",
+                          port == 0 ? 'A' : 'B',
                           static_cast<unsigned long>(baud));
             return;
         }
-
-        if (std::strcmp(argv[2], "swap") == 0) {
-            if (argc < 5) {
-                Serial.println("usage: setup uart swap <a|b|all> <on|off>");
-                return;
-            }
+        if (std::strcmp(argv[3], "swap") == 0) {
             bool enabled = false;
             if (!parseOnOff(argv[4], &enabled)) {
-                Serial.println("usage: setup uart swap <a|b|all> <on|off>");
+                Serial.println("usage: uart set <a|b> swap <on|off>");
                 return;
             }
-
-            if (std::strcmp(argv[3], "a") == 0) {
-                um980SetupSetSwap(0, enabled);
-            } else if (std::strcmp(argv[3], "b") == 0) {
-                um980SetupSetSwap(1, enabled);
-            } else if (std::strcmp(argv[3], "all") == 0) {
-                um980SetupSetSwap(0, enabled);
-                um980SetupSetSwap(1, enabled);
-            } else {
-                Serial.println("usage: setup uart swap <a|b|all> <on|off>");
-                return;
-            }
-            Serial.printf("UM980 UART swap updated (%s -> %s), pending apply.\n",
-                          argv[3], enabled ? "ON" : "OFF");
+            um980SetupSetSwap(port, enabled);
+            Serial.printf("UM980 UART %c swap set to %s (pending apply).\n",
+                          port == 0 ? 'A' : 'B',
+                          enabled ? "ON" : "OFF");
             return;
         }
-
-        if (std::strcmp(argv[2], "apply") == 0) {
-            const bool ok = um980SetupApply();
-            Serial.printf("UM980 UART apply -> %s\n", ok ? "OK" : "ERROR");
-            return;
-        }
-
-        Serial.println("usage: setup uart <show|baud|swap|apply> ...");
+        Serial.println("usage: uart set <a|b> <baud|swap> <value>");
         return;
     }
 
-    Serial.println("usage: setup [uart <show|baud|swap|apply> ...]");
+    if (std::strcmp(argv[1], "console") == 0) {
+        if (argc < 4) {
+            Serial.println("usage: uart console <a|b> <on|off>");
+            return;
+        }
+        uint8_t port = 0;
+        if (!parseUartPort(argv[2], &port)) {
+            Serial.println("usage: uart console <a|b> <on|off>");
+            return;
+        }
+        bool enabled = false;
+        if (!parseOnOff(argv[3], &enabled)) {
+            Serial.println("usage: uart console <a|b> <on|off>");
+            return;
+        }
+        um980SetupSetConsole(port, enabled);
+        Serial.printf("UM980 UART %c console -> %s\n",
+                      port == 0 ? 'A' : 'B',
+                      enabled ? "ON" : "OFF");
+        return;
+    }
+
+    Serial.println("usage: uart <show|apply|set|console>");
+}
+
+void cliCmdSetup(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
+    setupWizardRequestStart();
+    Serial.println("Setup wizard requested. It will start in loop context.");
 }
 
 void cliCmdUnknown(const char* cmd) {
@@ -640,7 +685,8 @@ void cliInit(void) {
     (void)cliRegisterCommand("module", &cliCmdModule, "Module runtime control");
     (void)cliRegisterCommand("actuator", &cliCmdActuator, "Actuator manual test mode");
     (void)cliRegisterCommand("diag", &cliCmdDiag, "Diagnostics (hw/mem/net)");
-    (void)cliRegisterCommand("setup", &cliCmdSetup, "Setup wizard + UM980 UART setup");
+    (void)cliRegisterCommand("setup", &cliCmdSetup, "Start setup wizard");
+    (void)cliRegisterCommand("uart", &cliCmdUart, "UM980 UART setup + live console");
 }
 
 bool cliRegisterCommand(const char* cmd,

@@ -5,24 +5,44 @@
 
 #include "um980_uart_setup.h"
 
+#include <Arduino.h>
+
 #include "fw_config.h"
 #include "hal/hal.h"
 
 static Um980UartSetup s_um980_setup;
+static char s_console_line_a[96] = {0};
+static char s_console_line_b[96] = {0};
+static size_t s_console_len_a = 0;
+static size_t s_console_len_b = 0;
+static bool s_console_dirty = false;
 
 void um980SetupLoadDefaults(uint32_t baud_default) {
-    s_um980_setup.baud = (baud_default == 0) ? 460800u : baud_default;
+    const uint32_t baud = (baud_default == 0) ? 460800u : baud_default;
+    s_um980_setup.baud_a = baud;
+    s_um980_setup.baud_b = baud;
     s_um980_setup.swap_a = false;
     s_um980_setup.swap_b = false;
+    s_um980_setup.console_a = false;
+    s_um980_setup.console_b = false;
+    s_console_line_a[0] = '\0';
+    s_console_line_b[0] = '\0';
+    s_console_len_a = 0;
+    s_console_len_b = 0;
+    s_console_dirty = false;
 }
 
 Um980UartSetup um980SetupGet(void) {
     return s_um980_setup;
 }
 
-void um980SetupSetBaud(uint32_t baud) {
+void um980SetupSetBaud(uint8_t port_idx, uint32_t baud) {
     if (baud == 0) return;
-    s_um980_setup.baud = baud;
+    if (port_idx == 0) {
+        s_um980_setup.baud_a = baud;
+    } else if (port_idx == 1) {
+        s_um980_setup.baud_b = baud;
+    }
 }
 
 void um980SetupSetSwap(uint8_t port_idx, bool enabled) {
@@ -33,26 +53,85 @@ void um980SetupSetSwap(uint8_t port_idx, bool enabled) {
     }
 }
 
-bool um980SetupApply(void) {
-    const int8_t a_rx = s_um980_setup.swap_a ? GNSS_UART1_TX : GNSS_UART1_RX;
-    const int8_t a_tx = s_um980_setup.swap_a ? GNSS_UART1_RX : GNSS_UART1_TX;
-    const int8_t b_rx = s_um980_setup.swap_b ? GNSS_UART2_TX : GNSS_UART2_RX;
-    const int8_t b_tx = s_um980_setup.swap_b ? GNSS_UART2_RX : GNSS_UART2_TX;
-
-    const bool um980_a_ok = hal_gnss_uart_begin(0, s_um980_setup.baud, a_rx, a_tx);
-    const bool um980_b_ok = hal_gnss_uart_begin(1, s_um980_setup.baud, b_rx, b_tx);
-
-    hal_log("Main: UM980 UART setup baud=%lu -> A(rx=%d tx=%d swap=%s)=%s B(rx=%d tx=%d swap=%s)=%s",
-            static_cast<unsigned long>(s_um980_setup.baud),
-            static_cast<int>(a_rx),
-            static_cast<int>(a_tx),
-            s_um980_setup.swap_a ? "ON" : "OFF",
-            um980_a_ok ? "OK" : "FAIL",
-            static_cast<int>(b_rx),
-            static_cast<int>(b_tx),
-            s_um980_setup.swap_b ? "ON" : "OFF",
-            um980_b_ok ? "OK" : "FAIL");
-
-    return um980_a_ok && um980_b_ok;
+void um980SetupSetConsole(uint8_t port_idx, bool enabled) {
+    if (port_idx == 0) {
+        s_um980_setup.console_a = enabled;
+    } else if (port_idx == 1) {
+        s_um980_setup.console_b = enabled;
+    }
 }
 
+static void appendConsoleByte(char* line, size_t* line_len, uint8_t byte) {
+    if (!line || !line_len) return;
+    if (byte == '\r') return;
+    if (byte == '\n') {
+        line[*line_len] = '\0';
+        s_console_dirty = true;
+        *line_len = 0;
+        return;
+    }
+    if (byte < 32 || byte > 126) return;
+    if (*line_len + 1 >= 95) {
+        line[*line_len] = '\0';
+        s_console_dirty = true;
+        *line_len = 0;
+    }
+    line[(*line_len)++] = static_cast<char>(byte);
+    line[*line_len] = '\0';
+}
+
+static void pollConsole(HardwareSerial& uart, bool enabled, char* line, size_t* line_len) {
+    if (!enabled) return;
+    int budget = 96;
+    while (budget-- > 0 && uart.available() > 0) {
+        const int value = uart.read();
+        if (value < 0) break;
+        appendConsoleByte(line, line_len, static_cast<uint8_t>(value));
+    }
+}
+
+void um980SetupConsoleTick(void) {
+    pollConsole(Serial1, s_um980_setup.console_a, s_console_line_a, &s_console_len_a);
+    pollConsole(Serial2, s_um980_setup.console_b, s_console_line_b, &s_console_len_b);
+    if (!s_console_dirty) return;
+
+    Serial.print("\r");
+    Serial.printf("[A]%s | [B]%s      ", s_console_line_a, s_console_line_b);
+    s_console_dirty = false;
+}
+
+bool um980SetupApplyPort(uint8_t port_idx) {
+    if (port_idx == 0) {
+        const int8_t rx = s_um980_setup.swap_a ? GNSS_UART1_TX : GNSS_UART1_RX;
+        const int8_t tx = s_um980_setup.swap_a ? GNSS_UART1_RX : GNSS_UART1_TX;
+        const bool ok = hal_gnss_uart_begin(0, s_um980_setup.baud_a, rx, tx);
+        if (ok) s_um980_setup.console_a = true;
+        hal_log("Main: UM980-A UART setup baud=%lu rx=%d tx=%d swap=%s -> %s",
+                static_cast<unsigned long>(s_um980_setup.baud_a),
+                static_cast<int>(rx),
+                static_cast<int>(tx),
+                s_um980_setup.swap_a ? "ON" : "OFF",
+                ok ? "OK" : "FAIL");
+        return ok;
+    }
+    if (port_idx == 1) {
+        const int8_t rx = s_um980_setup.swap_b ? GNSS_UART2_TX : GNSS_UART2_RX;
+        const int8_t tx = s_um980_setup.swap_b ? GNSS_UART2_RX : GNSS_UART2_TX;
+        const bool ok = hal_gnss_uart_begin(1, s_um980_setup.baud_b, rx, tx);
+        if (ok) s_um980_setup.console_b = true;
+        hal_log("Main: UM980-B UART setup baud=%lu rx=%d tx=%d swap=%s -> %s",
+                static_cast<unsigned long>(s_um980_setup.baud_b),
+                static_cast<int>(rx),
+                static_cast<int>(tx),
+                s_um980_setup.swap_b ? "ON" : "OFF",
+                ok ? "OK" : "FAIL");
+        return ok;
+    }
+    return false;
+}
+
+bool um980SetupApply(void) {
+    const bool a_ok = um980SetupApplyPort(0);
+    const bool b_ok = um980SetupApplyPort(1);
+    return a_ok && b_ok;
+}

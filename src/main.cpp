@@ -86,6 +86,7 @@ static void runBootCliSession(void) {
     size_t line_len = 0;
 
     while (true) {
+        um980SetupConsoleTick();
         while (Serial.available()) {
             const int ch = Serial.read();
             if (ch == '\r' || ch == '\n') {
