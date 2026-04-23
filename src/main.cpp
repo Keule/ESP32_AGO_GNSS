@@ -21,6 +21,8 @@
 #include <esp_task_wdt.h>
 #include <esp_ota_ops.h>
 #include <nvs_flash.h>
+#include <WiFi.h>
+#include <ArduinoOTA.h>
 #include <cstdio>
 #include <cstring>
 
@@ -52,6 +54,13 @@
 #include "esp_log.h"
 #include "logic/log_ext.h"
 
+#if defined(ARDUINO_ARCH_ESP32) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+#include <BluetoothSerial.h>
+#define MAIN_BT_SPP_AVAILABLE 1
+#else
+#define MAIN_BT_SPP_AVAILABLE 0
+#endif
+
 // ===================================================================
 // Task handles
 // ===================================================================
@@ -70,6 +79,15 @@ static constexpr uint32_t MAIN_GNSS_BUILDUP_STATUS_INTERVAL_MS = 2000;
 static uint32_t s_gnss_buildup_start_ms = 0;
 static bool s_gnss_buildup_fallback_latched = false;
 static constexpr size_t MAIN_BOOT_CLI_BUF_CAP = 128;
+static constexpr char MAIN_BOOT_AP_SSID[] = "AgSteer-Boot";
+static constexpr char MAIN_BOOT_AP_PASS[] = "agsteer123";
+static constexpr char MAIN_BOOT_OTA_HOST[] = "agsteer-boot";
+static bool s_boot_ota_active = false;
+static bool s_boot_ap_active = false;
+#if MAIN_BT_SPP_AVAILABLE
+static BluetoothSerial s_boot_bt_serial;
+static bool s_boot_bt_active = false;
+#endif
 
 static void initNvsFlashStorage(void) {
     esp_err_t err = nvs_flash_init();
@@ -111,35 +129,63 @@ static void runBootCliSession(void) {
 
     while (true) {
         bool handled_input = false;
-        while (Serial.available()) {
-            handled_input = true;
-            const int ch = Serial.read();
-            if (ch == '\r' || ch == '\n') {
-                if (line_len == 0) {
-                    continue;
-                }
+        auto processInput = [&](Stream& in, Print& out, bool mirror_to_serial, bool& consumed_any) -> bool {
+            while (in.available()) {
+                consumed_any = true;
+                const int ch = in.read();
+                if (ch == '\r' || ch == '\n') {
+                    if (line_len == 0) {
+                        continue;
+                    }
 
-                line_buf[line_len] = '\0';
-                Serial.println();
+                    line_buf[line_len] = '\0';
+                    out.println();
+                    if (mirror_to_serial) Serial.println();
 
-                if (std::strcmp(line_buf, "boot") == 0 || std::strcmp(line_buf, "exit") == 0) {
-                    Serial.println("Leaving Boot CLI, continuing startup...");
-                    return;
-                }
+                    if (std::strcmp(line_buf, "boot") == 0 || std::strcmp(line_buf, "exit") == 0) {
+                        out.println("Leaving Boot CLI, continuing startup...");
+                        if (mirror_to_serial) {
+                            Serial.println("Leaving Boot CLI, continuing startup...");
+                        }
+                        return true;
+                    }
 
-                cliProcessLine(line_buf);
-                line_len = 0;
-            } else if (ch == 3) {  // Ctrl+C
-                line_len = 0;
-                Serial.println("^C");
-            } else if (ch == 8 || ch == 127) {  // Backspace / DEL
-                if (line_len > 0) {
-                    line_len--;
-                    Serial.print("\b \b");
+                    cliProcessLine(line_buf);
+                    line_len = 0;
+                } else if (ch == 3) {  // Ctrl+C
+                    line_len = 0;
+                    out.println("^C");
+                    if (mirror_to_serial) Serial.println("^C");
+                } else if (ch == 8 || ch == 127) {  // Backspace / DEL
+                    if (line_len > 0) {
+                        line_len--;
+                        out.print("\b \b");
+                        if (mirror_to_serial) Serial.print("\b \b");
+                    }
+                } else if (line_len + 1 < sizeof(line_buf)) {
+                    line_buf[line_len++] = static_cast<char>(ch);
+                    out.print(static_cast<char>(ch));
+                    if (mirror_to_serial) Serial.print(static_cast<char>(ch));
                 }
-            } else if (line_len + 1 < sizeof(line_buf)) {
-                line_buf[line_len++] = static_cast<char>(ch);
             }
+            return false;
+        };
+
+        bool had_serial_input = false;
+        if (processInput(Serial, Serial, false, had_serial_input)) {
+            return;
+        }
+        handled_input |= had_serial_input;
+#if MAIN_BT_SPP_AVAILABLE
+        bool had_bt_input = false;
+        if (s_boot_bt_active && processInput(s_boot_bt_serial, s_boot_bt_serial, true, had_bt_input)) {
+            return;
+        }
+        handled_input |= had_bt_input;
+#endif
+
+        if (s_boot_ota_active) {
+            ArduinoOTA.handle();
         }
 #if FEAT_ENABLED(FEAT_COMPILED_NTRIP)
         ntripTick();
@@ -151,6 +197,44 @@ static void runBootCliSession(void) {
         }
         delay(10);
     }
+}
+
+static void startBootMaintenanceServices(void) {
+    WiFi.mode(WIFI_AP_STA);
+    s_boot_ap_active = WiFi.softAP(MAIN_BOOT_AP_SSID, MAIN_BOOT_AP_PASS);
+    if (s_boot_ap_active) {
+        IPAddress ip = WiFi.softAPIP();
+        hal_log("BOOT: WiFi AP active SSID=%s IP=%s", MAIN_BOOT_AP_SSID, ip.toString().c_str());
+    } else {
+        hal_log("BOOT: WiFi AP start failed (SSID=%s)", MAIN_BOOT_AP_SSID);
+    }
+
+    ArduinoOTA.setHostname(MAIN_BOOT_OTA_HOST);
+    ArduinoOTA.begin();
+    s_boot_ota_active = true;
+    hal_log("BOOT: ArduinoOTA active hostname=%s", MAIN_BOOT_OTA_HOST);
+
+#if MAIN_BT_SPP_AVAILABLE
+    s_boot_bt_active = s_boot_bt_serial.begin("AgSteer-BootCLI");
+    hal_log("BOOT: BT SPP %s", s_boot_bt_active ? "active" : "start failed");
+#else
+    hal_log("BOOT: BT SPP unavailable on this target");
+#endif
+}
+
+static void stopBootMaintenanceServices(void) {
+#if MAIN_BT_SPP_AVAILABLE
+    if (s_boot_bt_active) {
+        s_boot_bt_serial.end();
+        s_boot_bt_active = false;
+    }
+#endif
+
+    if (s_boot_ap_active) {
+        WiFi.softAPdisconnect(true);
+        s_boot_ap_active = false;
+    }
+    s_boot_ota_active = false;
 }
 
 // ===================================================================
@@ -733,7 +817,15 @@ void setup() {
 
     um980SetupLoadDefaults(softConfigGet().gnss_baud);
     um980SetupApply();
-    runBootCliSession();
+    const bool boot_maintenance_mode = !hal_safety_ok();
+    if (boot_maintenance_mode) {
+        hal_log("BOOT: maintenance mode active (safety LOW)");
+        startBootMaintenanceServices();
+        runBootCliSession();
+        stopBootMaintenanceServices();
+    } else {
+        hal_log("BOOT: maintenance mode skipped (safety not LOW)");
+    }
 
     // Initialise control system (PID controller with default gains).
     // NOTE: HAL-level init (imu, steer angle, actuator) was already done
