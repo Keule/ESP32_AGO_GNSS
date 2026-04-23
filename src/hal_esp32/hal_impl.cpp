@@ -399,6 +399,11 @@ static bool pinClaimsAddBatch(const PinClaimEntry* entries, size_t count, const 
 
         const PinClaimEntry* existing = pinClaimFind(pin);
         if (existing) {
+            if (existing->owner && entries[i].owner &&
+                std::strcmp(existing->owner, entries[i].owner) == 0) {
+                // Idempotent re-claim by same owner is allowed.
+                continue;
+            }
             LOGE("HAL", "Pin claim conflict on GPIO %d (%s vs %s, init_path=%s)",
                  pin,
                  existing->owner,
@@ -421,6 +426,11 @@ static bool pinClaimsAddBatch(const PinClaimEntry* entries, size_t count, const 
     for (size_t i = 0; i < count; ++i) {
         const int pin = entries[i].pin;
         if (pin < 0) continue;
+        const PinClaimEntry* existing = pinClaimFind(pin);
+        if (existing && existing->owner && entries[i].owner &&
+            std::strcmp(existing->owner, entries[i].owner) == 0) {
+            continue;
+        }
         if (s_pin_claim_count >= HAL_PIN_CLAIM_CAPACITY) {
             LOGE("HAL", "Pin claim table overflow while claiming GPIO %d (%s, init_path=%s)",
                  pin,
