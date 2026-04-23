@@ -22,7 +22,8 @@
 #include <esp_ota_ops.h>
 #include <nvs_flash.h>
 #include <WiFi.h>
-#include <ArduinoOTA.h>
+#include <WebServer.h>
+#include <Update.h>
 #include <cstdio>
 #include <cstring>
 
@@ -54,9 +55,13 @@
 #include "esp_log.h"
 #include "logic/log_ext.h"
 
-#if defined(ARDUINO_ARCH_ESP32) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+#if defined(__has_include)
+#if __has_include(<BluetoothSerial.h>)
 #include <BluetoothSerial.h>
 #define MAIN_BT_SPP_AVAILABLE 1
+#else
+#define MAIN_BT_SPP_AVAILABLE 0
+#endif
 #else
 #define MAIN_BT_SPP_AVAILABLE 0
 #endif
@@ -81,8 +86,8 @@ static bool s_gnss_buildup_fallback_latched = false;
 static constexpr size_t MAIN_BOOT_CLI_BUF_CAP = 128;
 static constexpr char MAIN_BOOT_AP_SSID[] = "AgSteer-Boot";
 static constexpr char MAIN_BOOT_AP_PASS[] = "agsteer123";
-static constexpr char MAIN_BOOT_OTA_HOST[] = "agsteer-boot";
-static bool s_boot_ota_active = false;
+static WebServer s_boot_web_server(80);
+static bool s_boot_web_ota_active = false;
 static bool s_boot_ap_active = false;
 #if MAIN_BT_SPP_AVAILABLE
 static BluetoothSerial s_boot_bt_serial;
@@ -184,8 +189,8 @@ static void runBootCliSession(void) {
         handled_input |= had_bt_input;
 #endif
 
-        if (s_boot_ota_active) {
-            ArduinoOTA.handle();
+        if (s_boot_web_ota_active) {
+            s_boot_web_server.handleClient();
         }
 #if FEAT_ENABLED(FEAT_COMPILED_NTRIP)
         ntripTick();
@@ -199,6 +204,54 @@ static void runBootCliSession(void) {
     }
 }
 
+static void bootWebHandleRoot(void) {
+    static const char kPage[] =
+        "<!doctype html><html><head><meta charset='utf-8'><title>AgSteer OTA</title></head>"
+        "<body><h2>AgSteer Boot OTA</h2>"
+        "<form method='POST' action='/update' enctype='multipart/form-data'>"
+        "<input type='file' name='firmware' accept='.bin' required>"
+        "<button type='submit'>Upload Firmware</button></form>"
+        "<p>Nach erfolgreichem Upload startet das Geraet neu.</p>"
+        "</body></html>";
+    s_boot_web_server.send(200, "text/html", kPage);
+}
+
+static void bootWebHandleUpdateDone(void) {
+    const bool ok = !Update.hasError();
+    s_boot_web_server.send(200, "text/plain", ok ? "OK - rebooting" : "FAIL");
+    if (ok) {
+        hal_log("BOOT: Web OTA successful -> reboot");
+        delay(500);
+        ESP.restart();
+    }
+}
+
+static void bootWebHandleUpdateUpload(void) {
+    HTTPUpload& upload = s_boot_web_server.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+        hal_log("BOOT: Web OTA upload start: %s", upload.filename.c_str());
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+            hal_log("BOOT: Web OTA Update.begin failed");
+        }
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+        const size_t written = Update.write(upload.buf, upload.currentSize);
+        if (written != upload.currentSize) {
+            hal_log("BOOT: Web OTA write failed (%u/%u)",
+                    (unsigned)written,
+                    (unsigned)upload.currentSize);
+        }
+    } else if (upload.status == UPLOAD_FILE_END) {
+        if (Update.end(true)) {
+            hal_log("BOOT: Web OTA upload complete (%u bytes)", (unsigned)upload.totalSize);
+        } else {
+            hal_log("BOOT: Web OTA Update.end failed");
+        }
+    } else if (upload.status == UPLOAD_FILE_ABORTED) {
+        Update.abort();
+        hal_log("BOOT: Web OTA upload aborted");
+    }
+}
+
 static void startBootMaintenanceServices(void) {
     WiFi.mode(WIFI_AP_STA);
     s_boot_ap_active = WiFi.softAP(MAIN_BOOT_AP_SSID, MAIN_BOOT_AP_PASS);
@@ -209,10 +262,11 @@ static void startBootMaintenanceServices(void) {
         hal_log("BOOT: WiFi AP start failed (SSID=%s)", MAIN_BOOT_AP_SSID);
     }
 
-    ArduinoOTA.setHostname(MAIN_BOOT_OTA_HOST);
-    ArduinoOTA.begin();
-    s_boot_ota_active = true;
-    hal_log("BOOT: ArduinoOTA active hostname=%s", MAIN_BOOT_OTA_HOST);
+    s_boot_web_server.on("/", HTTP_GET, bootWebHandleRoot);
+    s_boot_web_server.on("/update", HTTP_POST, bootWebHandleUpdateDone, bootWebHandleUpdateUpload);
+    s_boot_web_server.begin();
+    s_boot_web_ota_active = true;
+    hal_log("BOOT: Web OTA active at http://%s/", WiFi.softAPIP().toString().c_str());
 
 #if MAIN_BT_SPP_AVAILABLE
     s_boot_bt_active = s_boot_bt_serial.begin("AgSteer-BootCLI");
@@ -230,11 +284,14 @@ static void stopBootMaintenanceServices(void) {
     }
 #endif
 
+    if (s_boot_web_ota_active) {
+        s_boot_web_server.stop();
+        s_boot_web_ota_active = false;
+    }
     if (s_boot_ap_active) {
         WiFi.softAPdisconnect(true);
         s_boot_ap_active = false;
     }
-    s_boot_ota_active = false;
 }
 
 // ===================================================================
