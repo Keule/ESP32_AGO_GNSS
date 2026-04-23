@@ -21,6 +21,7 @@
 #include <esp_task_wdt.h>
 #include <esp_ota_ops.h>
 #include <cstdio>
+#include <cstring>
 
 #include "fw_config.h"
 #include "hal/hal.h"
@@ -66,11 +67,71 @@ static constexpr uint32_t MAIN_GNSS_BUILDUP_INIT_TIMEOUT_MS = 15000;
 static constexpr uint32_t MAIN_GNSS_BUILDUP_STATUS_INTERVAL_MS = 2000;
 static uint32_t s_gnss_buildup_start_ms = 0;
 static bool s_gnss_buildup_fallback_latched = false;
+static constexpr size_t MAIN_BOOT_CLI_BUF_CAP = 128;
 
 static inline bool shouldLogPeriodic(uint32_t now_ms, uint32_t* last_ms, uint32_t interval_ms) {
     if (now_ms - *last_ms < interval_ms) return false;
     *last_ms = now_ms;
     return true;
+}
+
+static void setupUm980Uarts(uint32_t baud) {
+    if (baud == 0) baud = 460800;
+
+    const bool um980_a_ok = hal_gnss_uart_begin(0, baud, GNSS_UART1_RX, GNSS_UART1_TX);
+    const bool um980_b_ok = hal_gnss_uart_begin(1, baud, GNSS_UART2_RX, GNSS_UART2_TX);
+
+    hal_log("Main: UM980 UART setup baud=%lu -> A(UART1 rx=%d tx=%d)=%s B(UART2 rx=%d tx=%d)=%s",
+            static_cast<unsigned long>(baud),
+            static_cast<int>(GNSS_UART1_RX),
+            static_cast<int>(GNSS_UART1_TX),
+            um980_a_ok ? "OK" : "FAIL",
+            static_cast<int>(GNSS_UART2_RX),
+            static_cast<int>(GNSS_UART2_TX),
+            um980_b_ok ? "OK" : "FAIL");
+}
+
+static void runBootCliSession(void) {
+    Serial.println();
+    Serial.println("=== Boot CLI ===");
+    Serial.println("System init complete. Type commands now.");
+    Serial.println("Type 'boot' or 'exit' to continue startup.");
+
+    char line_buf[MAIN_BOOT_CLI_BUF_CAP];
+    size_t line_len = 0;
+
+    while (true) {
+        while (Serial.available()) {
+            const int ch = Serial.read();
+            if (ch == '\r' || ch == '\n') {
+                if (line_len == 0) {
+                    continue;
+                }
+
+                line_buf[line_len] = '\0';
+                Serial.println();
+
+                if (std::strcmp(line_buf, "boot") == 0 || std::strcmp(line_buf, "exit") == 0) {
+                    Serial.println("Leaving Boot CLI, continuing startup...");
+                    return;
+                }
+
+                cliProcessLine(line_buf);
+                line_len = 0;
+            } else if (ch == 3) {  // Ctrl+C
+                line_len = 0;
+                Serial.println("^C");
+            } else if (ch == 8 || ch == 127) {  // Backspace / DEL
+                if (line_len > 0) {
+                    line_len--;
+                    Serial.print("\b \b");
+                }
+            } else if (line_len + 1 < sizeof(line_buf)) {
+                line_buf[line_len++] = static_cast<char>(ch);
+            }
+        }
+        delay(10);
+    }
 }
 
 // ===================================================================
@@ -626,6 +687,9 @@ void setup() {
         hal_log("Main: no NVS config found -> setup wizard pending");
         setupWizardRequestStart();
     }
+
+    setupUm980Uarts(softConfigGet().gnss_baud);
+    runBootCliSession();
 
     // Initialise control system (PID controller with default gains).
     // NOTE: HAL-level init (imu, steer angle, actuator) was already done
