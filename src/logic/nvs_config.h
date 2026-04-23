@@ -12,7 +12,7 @@ constexpr const char* NS = "agsteer";
 // NTRIP
 constexpr const char* NTRIP_HOST = "ntrip_host";
 constexpr const char* NTRIP_PORT = "ntrip_port";
-constexpr const char* NTRIP_MOUNT = "ntrip_mountpoint";
+constexpr const char* NTRIP_MOUNT = "ntrip_mnt";
 constexpr const char* NTRIP_USER = "ntrip_user";
 constexpr const char* NTRIP_PASS = "ntrip_password";
 // PID

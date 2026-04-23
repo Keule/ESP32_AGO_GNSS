@@ -313,8 +313,10 @@ static void startBootMaintenanceServices(void) {
 #if MAIN_BT_SPP_AVAILABLE
     s_boot_bt_active = s_boot_bt_serial.begin("AgSteer-BootCLI");
     hal_log("BOOT: BT SPP %s", s_boot_bt_active ? "active" : "start failed");
+    um980SetupSetConsoleMirror(s_boot_bt_active ? static_cast<Stream*>(&s_boot_bt_serial) : nullptr);
 #else
     hal_log("BOOT: BT SPP unavailable on this target");
+    um980SetupSetConsoleMirror(nullptr);
 #endif
 }
 
@@ -325,6 +327,7 @@ static void stopBootMaintenanceServices(void) {
         s_boot_bt_active = false;
     }
 #endif
+    um980SetupSetConsoleMirror(nullptr);
 
     if (s_boot_web_ota_active) {
         s_boot_web_server.stop();

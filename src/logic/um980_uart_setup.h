@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <Stream.h>
 
 struct Um980UartSetup {
     uint32_t baud_a = 460800;
@@ -39,3 +40,6 @@ bool um980SetupApplyPort(uint8_t port_idx);
 
 /// Poll enabled UART consoles and update one-line status output.
 void um980SetupConsoleTick(void);
+
+/// Optional mirror target for live UART console line (e.g. Bluetooth SPP).
+void um980SetupSetConsoleMirror(Stream* mirror);

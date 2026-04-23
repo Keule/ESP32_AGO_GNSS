@@ -13,6 +13,7 @@
 #endif
 
 namespace {
+static constexpr const char* NTRIP_MOUNT_LEGACY_KEY = "ntrip_mountpoint";
 
 static uint32_t floatToU32(float value) {
     uint32_t out = 0;
@@ -46,6 +47,9 @@ void nvsConfigLoad(RuntimeConfig& cfg) {
 
     loadString(handle, nvs_keys::NTRIP_HOST, cfg.ntrip_host, sizeof(cfg.ntrip_host));
     loadString(handle, nvs_keys::NTRIP_MOUNT, cfg.ntrip_mountpoint, sizeof(cfg.ntrip_mountpoint));
+    if (cfg.ntrip_mountpoint[0] == '\0') {
+        loadString(handle, NTRIP_MOUNT_LEGACY_KEY, cfg.ntrip_mountpoint, sizeof(cfg.ntrip_mountpoint));
+    }
     loadString(handle, nvs_keys::NTRIP_USER, cfg.ntrip_user, sizeof(cfg.ntrip_user));
     loadString(handle, nvs_keys::NTRIP_PASS, cfg.ntrip_password, sizeof(cfg.ntrip_password));
 

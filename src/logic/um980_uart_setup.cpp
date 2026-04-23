@@ -19,6 +19,7 @@ static size_t s_console_len_a = 0;
 static size_t s_console_len_b = 0;
 static char s_console_frame[CONSOLE_TOTAL_WIDTH + 1] = {0};
 static bool s_console_dirty = false;
+static Stream* s_console_mirror = nullptr;
 
 static void resetConsoleFrame(void) {
     for (size_t i = 0; i < CONSOLE_TOTAL_WIDTH; ++i) {
@@ -124,7 +125,15 @@ void um980SetupConsoleTick(void) {
 
     Serial.print("\r");
     Serial.print(s_console_frame);
+    if (s_console_mirror) {
+        s_console_mirror->print("\r");
+        s_console_mirror->print(s_console_frame);
+    }
     s_console_dirty = false;
+}
+
+void um980SetupSetConsoleMirror(Stream* mirror) {
+    s_console_mirror = mirror;
 }
 
 bool um980SetupApplyPort(uint8_t port_idx) {
