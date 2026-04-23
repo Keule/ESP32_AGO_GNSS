@@ -24,6 +24,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Update.h>
+#include <soc/soc_caps.h>
 #include <cstdio>
 #include <cstring>
 
@@ -55,9 +56,11 @@
 #include "esp_log.h"
 #include "logic/log_ext.h"
 
-#if defined(__has_include)
-#if __has_include(<BluetoothSerial.h>)
+#if defined(__has_include) && __has_include(<BluetoothSerial.h>)
 #include <BluetoothSerial.h>
+#if defined(SOC_BT_CLASSIC_SUPPORTED) && SOC_BT_CLASSIC_SUPPORTED && \
+    defined(CONFIG_BT_ENABLED) && defined(CONFIG_BLUEDROID_ENABLED) && \
+    defined(CONFIG_BT_CLASSIC_ENABLED)
 #define MAIN_BT_SPP_AVAILABLE 1
 #else
 #define MAIN_BT_SPP_AVAILABLE 0
