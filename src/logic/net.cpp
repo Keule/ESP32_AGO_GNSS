@@ -166,8 +166,14 @@ static void processHardwareMessageCommand(const char* msg_text) {
 }
 
 static void applySteerConfigBits(const AogSteerConfigIn& config) {
-    // Mirror motor driver selection to runtime config:
-    // set0 bit4 = 1 -> Cytron, 0 -> IBT2 (legacy AOG semantics).
+    // Ist-Zustand (TASK-003 / ADR-PGN-001):
+    // - Funktional angewendet wird derzeit nur set0 bit4 (Driver Cytron/IBT2)
+    //   via RuntimeConfig.actuator_type.
+    // - Weitere PGN-251-Bits werden aktuell geloggt/gespiegelt, aber nicht bis
+    //   in eine sichere Hardware-Rekonfiguration durchverdrahtet.
+    // TODO: Apply hardware config bits stufenweise:
+    //   A) laufzeitfähige Bits ohne Neustart in kontrolliertem Apply-Point,
+    //   B) Reinit-/Neustart-Bits nur über expliziten, sicheren Reconfig-Pfad.
     RuntimeConfig& rt_cfg = softConfigGet();
     rt_cfg.actuator_type =
         (config.set0 & CONFIG_BIT_DRIVER_CYTRON) ? 1U : 2U;
